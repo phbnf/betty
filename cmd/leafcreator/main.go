@@ -37,6 +37,7 @@ func main() {
 
 	eg, _ := errgroup.WithContext(context.Background())
 
+	t := time.NewTicker(time.Second)
 	for i := 0; i < *numWriters; i++ {
 		eg.Go(func() error {
 			d := time.Second / time.Duration((*leavesPerSecond/2.0)+rand.Int63n(*leavesPerSecond)/2)
@@ -44,10 +45,16 @@ func main() {
 				time.Sleep(d)
 				e := newLeaf()
 				// submit leaf
-				_, err := w.Add(e)
+				seq, err := w.Add(e)
 				if err != nil {
 					klog.Infof("Error adding leaf: %v", err)
 				}
+				select {
+				case <-t.C:
+					klog.Infof("Just added to %d", seq)
+				default:
+				}
+
 			}
 			return nil
 		})

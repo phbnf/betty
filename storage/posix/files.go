@@ -42,9 +42,20 @@ type Storage struct {
 }
 
 func NewStorage(path string) *Storage {
+	nextSeq := uint64(0)
+	cpRaw, err := ReadCheckpoint(path)
+	if err == nil {
+		var cp f_log.Checkpoint
+		if err := json.Unmarshal(cpRaw, &cp); err != nil {
+			klog.Errorf("failed to unmarshal checkpoint")
+		} else {
+			nextSeq = cp.Size
+		}
+	}
 	return &Storage{
-		Path: path,
-		work: make(chan uint64, 10),
+		Path:    path,
+		nextSeq: nextSeq,
+		work:    make(chan uint64, 10),
 	}
 }
 
@@ -233,9 +244,9 @@ func (s *Storage) Integrate(ctx context.Context) error {
 			}
 		}
 
-		b, _, err := s.ReadBatch(ctx, curCP.Size)
+		b, bID, err := s.ReadBatch(ctx, curCP.Size)
 		if err != nil {
-			klog.Errorf("Failed to read preSeq batch at %d", curCP.Size)
+			klog.V(2).Infof("Failed to read preSeq batch at %d - already processed?", curCP.Size)
 			continue
 		}
 		newCP, err := doIntegrate(ctx, curCP.Size, b, s, rfc6962.DefaultHasher)
@@ -244,17 +255,15 @@ func (s *Storage) Integrate(ctx context.Context) error {
 			continue
 		}
 		klog.Infof("NewCP: %d (%x)", newCP.Size, newCP.Hash)
-		/*
-			if err := s.RemoveBatch(ctx, curCP.Size, bID); err != nil {
-				klog.Errorf("Failed to remove temporary batch data: %v", err)
-			}
-		*/
 		newCPRaw, err := json.Marshal(newCP)
 		if err != nil {
 			klog.Errorf("Failed to marshall new checkpoint: %v", err)
 		}
 		if err := s.WriteCheckpoint(ctx, newCPRaw); err != nil {
 			klog.Errorf("Failed to store new checkpoint: %v", err)
+		}
+		if err := s.RemoveBatch(ctx, curCP.Size, bID); err != nil {
+			klog.Errorf("Failed to remove temporary batch data: %v", err)
 		}
 	}
 }

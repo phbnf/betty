@@ -39,6 +39,8 @@ type IntegrateStorage interface {
 
 	// WriteCheckpoint stores a newly updated log checkpoint.
 	WriteCheckpoint(ctx context.Context, newCPRaw []byte) error
+
+	GetEntryBundle(ctx context.Context, index uint64, size uint64) ([]byte, error)
 }
 
 var (

@@ -30,10 +30,9 @@ func main() {
 		panic(fmt.Errorf("failed to make directory structure: %w", err))
 	}
 
-	s := posix.NewStorage(*path)
+	s := posix.NewStorage(*path, log.Params{EntryBundleSize: *batchSize})
 	// Config lib
 	w := log.NewWriter(*batchSize, *batchMaxAge, s.Sequence)
-	go s.Integrate(context.Background())
 
 	eg, _ := errgroup.WithContext(context.Background())
 

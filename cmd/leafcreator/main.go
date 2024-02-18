@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"time"
 
@@ -19,6 +19,8 @@ var (
 	leafSize        = flag.Int("leaf_size", 1024, "Leaf size in bytes")
 	numWriters      = flag.Int("num_writers", 100, "Number of parallel writers")
 	path            = flag.String("path", "/tmp/log", "Path to log root diretory")
+	batchSize       = flag.Int("batch_size", 1, "Size of batch before flushing")
+	batchMaxAge     = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
 )
 
 func main() {
@@ -30,14 +32,14 @@ func main() {
 
 	s := posix.NewStorage(*path)
 	// Config lib
-	w := log.NewWriter(10, s.Sequence)
+	w := log.NewWriter(*batchSize, *batchMaxAge, s.Sequence)
 	go s.Integrate(context.Background())
 
 	eg, _ := errgroup.WithContext(context.Background())
 
 	for i := 0; i < *numWriters; i++ {
 		eg.Go(func() error {
-			d := time.Second / time.Duration(*leavesPerSecond)
+			d := time.Second / time.Duration((*leavesPerSecond/2.0)+rand.Int63n(*leavesPerSecond)/2)
 			for {
 				time.Sleep(d)
 				e := newLeaf()
@@ -45,7 +47,6 @@ func main() {
 				_, err := w.Add(e)
 				if err != nil {
 					klog.Infof("Error adding leaf: %v", err)
-					return err
 				}
 			}
 			return nil

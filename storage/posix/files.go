@@ -46,18 +46,20 @@ func NewStorage(path string, params log.Params) *Storage {
 	r.lockCP()
 	defer r.unlockCP()
 	if err := r.readCheckpoint(); err != nil {
-		panic(err)
+		if !errors.Is(os.ErrNotExist, err) {
+			panic(err)
+		}
 	}
 	return r
 }
 
 func (s *Storage) lockCP() error {
 	if s.cpFile != nil {
-		return errors.New("already locked")
+		panic(errors.New("already locked"))
 	}
 
 	var err error
-	s.cpFile, err = os.OpenFile(filepath.Join(s.Path, layout.CheckpointPath), syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC, filePerm)
+	s.cpFile, err = os.OpenFile(filepath.Join(s.Path, layout.CheckpointPath+".lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC, filePerm)
 	if err != nil {
 		return err
 	}
@@ -68,7 +70,9 @@ func (s *Storage) lockCP() error {
 		Start:  0,
 		Len:    0,
 	}
-	return syscall.FcntlFlock(s.cpFile.Fd(), syscall.F_SETLK, &flockT)
+	for syscall.FcntlFlock(s.cpFile.Fd(), syscall.F_SETLKW, &flockT) == syscall.EINTR {
+	}
+	return nil
 }
 
 func (s *Storage) unlockCP() error {
@@ -84,9 +88,13 @@ func (s *Storage) unlockCP() error {
 // Returns the sequence number assigned to the first entry in the batch, or an error.
 func (s *Storage) Sequence(ctx context.Context, b log.Batch) (uint64, error) {
 	s.Lock()
-	s.lockCP()
+	if err := s.lockCP(); err != nil {
+		panic(err)
+	}
 	defer func() {
-		s.unlockCP()
+		if err := s.unlockCP(); err != nil {
+			panic(err)
+		}
 		s.Unlock()
 	}()
 
@@ -283,17 +291,16 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 // WriteCheckpoint stores a raw log checkpoint on disk.
 func (s *Storage) WriteCheckpoint(_ context.Context, newCPRaw []byte) error {
 	oPath := filepath.Join(s.Path, layout.CheckpointPath)
-	tmp := fmt.Sprintf("%s.tmp", oPath)
-	if err := s.createExclusive(tmp, newCPRaw); err != nil {
-		return fmt.Errorf("failed to create temporary checkpoint file: %w", err)
+	if err := s.createExclusive(oPath, newCPRaw); err != nil {
+		return fmt.Errorf("failed to create checkpoint file: %w", err)
 	}
-	return os.Rename(tmp, oPath)
+	return nil
 }
 
 func (s *Storage) readCheckpoint() error {
-	b, err := io.ReadAll(s.cpFile)
+	b, err := os.ReadFile(filepath.Join(s.Path, layout.CheckpointPath))
 	if err != nil {
-		if errors.Is(os.ErrNotExist, err) {
+		if _, ok := err.(*os.PathError); ok {
 			return nil
 		}
 		return err

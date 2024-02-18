@@ -69,7 +69,6 @@ func (w *Writer) Add(e []byte) (uint64, error) {
 	w.Unlock()
 	<-b.Done
 	return b.FirstSeq + uint64(n), b.Err
-
 }
 
 func (w *Writer) flushWithLock() {

@@ -45,7 +45,7 @@ func New(path string, params log.Params) *Storage {
 		path:   path,
 		params: params,
 	}
-	if err := r.ReadCheckpoint(); err != nil {
+	if _, err := r.ReadCheckpoint(); err != nil {
 		if !errors.Is(os.ErrNotExist, err) {
 			panic(err)
 		}
@@ -110,7 +110,7 @@ func (s *Storage) Sequence(ctx context.Context, b writer.Batch) (uint64, error) 
 		s.Unlock()
 	}()
 
-	if err := s.ReadCheckpoint(); err != nil {
+	if _, err := s.ReadCheckpoint(); err != nil {
 		return 0, err
 	}
 
@@ -201,7 +201,7 @@ func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) 
 		klog.Errorf("Failed to integrate: %v", err)
 		return err
 	}
-	klog.Infof("NewCP: %d (%x)", newCP.Size, newCP.Hash)
+	klog.V(1).Infof("NewCP: %d (%x)", newCP.Size, newCP.Hash)
 	newCPRaw, err := json.Marshal(newCP)
 	if err != nil {
 		klog.Errorf("Failed to marshall new checkpoint: %v", err)
@@ -304,24 +304,21 @@ func (s *Storage) WriteCheckpoint(_ context.Context, newCPRaw []byte) error {
 }
 
 // Readcheckpoint returns the latest stored checkpoint.
-func (s *Storage) ReadCheckpoint() error {
+func (s *Storage) ReadCheckpoint() (*f_log.Checkpoint, error) {
 	b, err := os.ReadFile(filepath.Join(s.path, layout.CheckpointPath))
 	if err != nil {
-		if _, ok := err.(*os.PathError); ok {
-			return nil
-		}
-		return err
+		return nil, err
 	}
 	if len(b) == 0 {
 		// uninitialised log
-		return nil
+		return nil, nil
 	}
 	cp := &f_log.Checkpoint{}
 	if err := json.Unmarshal(b, cp); err != nil {
-		return err
+		return nil, err
 	}
 	s.latestCP = *cp
-	return nil
+	return cp, nil
 }
 
 // createExclusive creates the named file before writing the data in d to it.

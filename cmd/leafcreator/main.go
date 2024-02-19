@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/AlCutter/betty/log"
 	"github.com/AlCutter/betty/log/writer"
 	"github.com/AlCutter/betty/storage/posix"
+	f_log "github.com/transparency-dev/formats/log"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/klog/v2"
 )
@@ -24,18 +26,49 @@ var (
 	batchMaxAge     = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
 )
 
+type latency struct {
+	sync.Mutex
+	total time.Duration
+	n     int
+	min   time.Duration
+	max   time.Duration
+}
+
+func (l *latency) Add(d time.Duration) {
+	l.Lock()
+	defer l.Unlock()
+	l.total += d
+	l.n++
+	if d < l.min {
+		l.min = d
+	}
+	if d > l.max {
+		l.max = d
+	}
+}
+
+func (l *latency) String() string {
+	l.Lock()
+	defer l.Unlock()
+	return fmt.Sprintf("[Mean: %v Min: %v Max %v]", l.total/time.Duration(l.n), l.min, l.max)
+}
+
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 	if err := os.MkdirAll(*path, 0o755); err != nil {
 		panic(fmt.Errorf("failed to make directory structure: %w", err))
 	}
+	ctx := context.Background()
 
 	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize})
+	l := &latency{}
+
+	go printStats(ctx, s, l)
 	// Config lib
 	w := writer.NewWriter(*batchSize, *batchMaxAge, s.Sequence)
 
-	eg, _ := errgroup.WithContext(context.Background())
+	eg, _ := errgroup.WithContext(ctx)
 
 	t := time.NewTicker(time.Second)
 	for i := 0; i < *numWriters; i++ {
@@ -45,12 +78,14 @@ func main() {
 				time.Sleep(d)
 				e := newLeaf()
 				// submit leaf
+				n := time.Now()
 				seq, err := w.Add(e)
 				if err != nil {
 					klog.Infof("Error adding leaf: %v", err)
 				}
 				select {
 				case <-t.C:
+					l.Add(time.Since(n))
 					klog.Infof("Just added to %d", seq)
 				default:
 				}
@@ -67,4 +102,28 @@ func newLeaf() []byte {
 		panic(err)
 	}
 	return r
+}
+
+func printStats(ctx context.Context, s *posix.Storage, l *latency) {
+	interval := time.Second
+	var lastCP *f_log.Checkpoint
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+			cp, err := s.ReadCheckpoint()
+			if err != nil {
+				klog.Errorf("Failed to get checkpoint: %v", err)
+				continue
+			}
+			if lastCP != nil {
+				added := cp.Size - lastCP.Size
+				klog.Infof("CP size %d (+%d); Latency: %v", cp.Size, added, l.String())
+			}
+			lastCP = cp
+
+		}
+
+	}
 }

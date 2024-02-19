@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/AlCutter/betty/log"
 	"github.com/AlCutter/betty/log/writer"
@@ -34,17 +35,20 @@ type Storage struct {
 	sync.Mutex
 	params log.Params
 	path   string
+	pool   *writer.Pool
 
 	cpFile   *os.File
 	latestCP f_log.Checkpoint
 }
 
 // New creates a new POSIX storage.
-func New(path string, params log.Params) *Storage {
+func New(path string, params log.Params, batchMaxAge time.Duration) *Storage {
 	r := &Storage{
 		path:   path,
 		params: params,
 	}
+	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
+
 	if _, err := r.ReadCheckpoint(); err != nil {
 		if !errors.Is(os.ErrNotExist, err) {
 			panic(err)
@@ -93,33 +97,10 @@ func (s *Storage) unlockCP() error {
 	return nil
 }
 
-// Sequence commits to sequence numbers for batches of entries.
+// Sequence commits to sequence numbers for an entry
 // Returns the sequence number assigned to the first entry in the batch, or an error.
-func (s *Storage) Sequence(ctx context.Context, b writer.Batch) (uint64, error) {
-	// Double locking:
-	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
-	// - The POSIX `LockCP()` ensures that distinct tasks are serialised.
-	s.Lock()
-	if err := s.lockCP(); err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := s.unlockCP(); err != nil {
-			panic(err)
-		}
-		s.Unlock()
-	}()
-
-	if _, err := s.ReadCheckpoint(); err != nil {
-		return 0, err
-	}
-
-	seq, err := s.sequenceBatch(ctx, b)
-	if err != nil {
-		return 0, err
-	}
-
-	return seq, nil
+func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
+	return s.pool.Add(b)
 }
 
 // GetEntryBundle retrieves the Nth entries bundle.
@@ -139,6 +120,24 @@ func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byt
 // We try to minimise the number of partially complete entry bundles by writing entries in chunks rather
 // than one-by-one.
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
+	// Double locking:
+	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
+	// - The POSIX `LockCP()` ensures that distinct tasks are serialised.
+	s.Lock()
+	if err := s.lockCP(); err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := s.unlockCP(); err != nil {
+			panic(err)
+		}
+		s.Unlock()
+	}()
+
+	if _, err := s.ReadCheckpoint(); err != nil {
+		return 0, err
+	}
+
 	if len(batch.Entries) == 0 {
 		return 0, nil
 	}

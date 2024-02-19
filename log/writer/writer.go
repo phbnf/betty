@@ -4,9 +4,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/transparency-dev/merkle/compact"
-	"github.com/transparency-dev/merkle/rfc6962"
 )
 
 type Batch struct {
@@ -18,13 +15,11 @@ type Batch struct {
 // Must not return successfully until the assigned sequence numbers are durably stored.
 type SequenceFunc func(context.Context, Batch) (uint64, error)
 
-func NewWriter(bufferSize int, maxAge time.Duration, s SequenceFunc) *Writer {
-	rf := compact.RangeFactory{Hash: rfc6962.DefaultHasher.HashChildren}
-	return &Writer{
-		current: &pool{
-			Done:   make(chan struct{}),
-			cRange: rf.NewEmptyRange(0),
-			Born:   time.Now(),
+func NewPool(bufferSize int, maxAge time.Duration, s SequenceFunc) *Pool {
+	return &Pool{
+		current: &batch{
+			Done: make(chan struct{}),
+			Born: time.Now(),
 		},
 		bufferSize: bufferSize,
 		seq:        s,
@@ -32,10 +27,10 @@ func NewWriter(bufferSize int, maxAge time.Duration, s SequenceFunc) *Writer {
 	}
 }
 
-// Writer is a helper for adding entries to a log.
-type Writer struct {
+// Pool is a helper for adding entries to a log.
+type Pool struct {
 	sync.Mutex
-	current    *pool
+	current    *batch
 	bufferSize int
 	maxAge     time.Duration
 	flushTimer *time.Timer
@@ -45,50 +40,48 @@ type Writer struct {
 
 // Add adds an entry to the tree.
 // Returns the assigned sequence number, or an error.
-func (w *Writer) Add(e []byte) (uint64, error) {
-	w.Lock()
-	b := w.current
+func (p *Pool) Add(e []byte) (uint64, error) {
+	p.Lock()
+	b := p.current
 	if len(b.Entries) == 0 {
-		w.flushTimer = time.AfterFunc(w.maxAge, func() {
-			w.Lock()
-			defer w.Unlock()
-			w.flushWithLock()
+		p.flushTimer = time.AfterFunc(p.maxAge, func() {
+			p.Lock()
+			defer p.Unlock()
+			p.flushWithLock()
 		})
 	}
 	n := b.Add(e)
-	if n >= w.bufferSize || time.Since(w.current.Born) > w.maxAge {
-		w.flushWithLock()
+	if n >= p.bufferSize || time.Since(p.current.Born) > p.maxAge {
+		p.flushWithLock()
 	}
-	w.Unlock()
+	p.Unlock()
 	<-b.Done
 	return b.FirstSeq + uint64(n), b.Err
 }
 
-func (w *Writer) flushWithLock() {
-	w.flushTimer.Stop()
-	w.flushTimer = nil
-	b := w.current
-	w.current = &pool{
+func (p *Pool) flushWithLock() {
+	p.flushTimer.Stop()
+	p.flushTimer = nil
+	b := p.current
+	p.current = &batch{
 		Done: make(chan struct{}),
 		Born: time.Now(),
 	}
 	go func() {
-		b.FirstSeq, b.Err = w.seq(context.TODO(), Batch{Entries: b.Entries})
+		b.FirstSeq, b.Err = p.seq(context.TODO(), Batch{Entries: b.Entries})
 		close(b.Done)
 	}()
 }
 
-type pool struct {
+type batch struct {
 	Born     time.Time
 	Entries  [][]byte
 	Done     chan struct{}
 	FirstSeq uint64
 	Err      error
-
-	cRange *compact.Range
 }
 
-func (b *pool) Add(e []byte) int {
+func (b *batch) Add(e []byte) int {
 	b.Entries = append(b.Entries, e)
 	return len(b.Entries)
 }

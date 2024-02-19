@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/AlCutter/betty/log"
-	"github.com/AlCutter/betty/log/writer"
 	"github.com/AlCutter/betty/storage/posix"
 	f_log "github.com/transparency-dev/formats/log"
 	"golang.org/x/sync/errgroup"
@@ -61,12 +60,12 @@ func main() {
 	}
 	ctx := context.Background()
 
-	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize})
+	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge)
+
 	l := &latency{}
 
 	go printStats(ctx, s, l)
 	// Config lib
-	w := writer.NewWriter(*batchSize, *batchMaxAge, s.Sequence)
 
 	eg, _ := errgroup.WithContext(ctx)
 
@@ -79,7 +78,7 @@ func main() {
 				e := newLeaf()
 				// submit leaf
 				n := time.Now()
-				seq, err := w.Add(e)
+				seq, err := s.Sequence(ctx, e)
 				if err != nil {
 					klog.Infof("Error adding leaf: %v", err)
 				}

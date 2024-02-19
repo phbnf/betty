@@ -86,7 +86,7 @@ func main() {
 				select {
 				case <-t.C:
 					l.Add(time.Since(n))
-					klog.Infof("Just added to %d", seq)
+					klog.V(1).Infof("Just added to %d", seq)
 				default:
 				}
 

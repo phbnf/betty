@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AlCutter/betty/log"
+	"github.com/AlCutter/betty/log/writer"
 	"github.com/AlCutter/betty/storage/posix"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/klog/v2"
@@ -32,7 +33,7 @@ func main() {
 
 	s := posix.NewStorage(*path, log.Params{EntryBundleSize: *batchSize})
 	// Config lib
-	w := log.NewWriter(*batchSize, *batchMaxAge, s.Sequence)
+	w := writer.NewWriter(*batchSize, *batchMaxAge, s.Sequence)
 
 	eg, _ := errgroup.WithContext(context.Background())
 

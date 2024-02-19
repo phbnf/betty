@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package posix
+package writer
 
 import (
 	"context"
@@ -55,7 +55,7 @@ var (
 
 // Integrate adds all sequenced entries greater than fromSize into the tree.
 // Returns an updated Checkpoint, or an error.
-func doIntegrate(ctx context.Context, fromSize uint64, batch [][]byte, st IntegrateStorage, h merkle.LogHasher) (*f_log.Checkpoint, error) {
+func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st IntegrateStorage, h merkle.LogHasher) (*f_log.Checkpoint, error) {
 	getTile := func(l, i uint64) (*api.Tile, error) {
 		return st.GetTile(ctx, l, i, fromSize)
 	}
@@ -95,6 +95,7 @@ func doIntegrate(ctx context.Context, fromSize uint64, batch [][]byte, st Integr
 		if err := newRange.Append(lh, tc.Visit); err != nil {
 			return nil, fmt.Errorf("newRange.Append(): %v", err)
 		}
+
 	}
 
 	// Merge the update range into the old tree

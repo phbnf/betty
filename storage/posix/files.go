@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/AlCutter/betty/log"
+	"github.com/AlCutter/betty/log/writer"
 	"github.com/transparency-dev/merkle/rfc6962"
 	"github.com/transparency-dev/serverless-log/api"
 	"github.com/transparency-dev/serverless-log/api/layout"
@@ -86,7 +87,7 @@ func (s *Storage) unlockCP() error {
 
 // Sequence commits to sequence numbers for batches of entries.
 // Returns the sequence number assigned to the first entry in the batch, or an error.
-func (s *Storage) Sequence(ctx context.Context, b log.Batch) (uint64, error) {
+func (s *Storage) Sequence(ctx context.Context, b writer.Batch) (uint64, error) {
 	s.Lock()
 	if err := s.lockCP(); err != nil {
 		panic(err)
@@ -118,7 +119,7 @@ func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byt
 	return os.ReadFile(filepath.Join(bd, bf))
 }
 
-func (s *Storage) sequenceBatch(ctx context.Context, batch log.Batch) (uint64, error) {
+func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
 	seq := s.latestCP.Size
 	bundleIndex, entriesInBundle := seq/uint64(s.Params.EntryBundleSize), seq%uint64(s.Params.EntryBundleSize)
 	bundle := &bytes.Buffer{}
@@ -161,11 +162,11 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch log.Batch) (uint64, e
 		}
 	}
 
-	return seq, s.Integrate(ctx, seq, batch.Entries)
+	return seq, s.doIntegrate(ctx, seq, batch.Entries)
 }
 
-func (s *Storage) Integrate(ctx context.Context, from uint64, batch [][]byte) error {
-	newCP, err := doIntegrate(ctx, from, batch, s, rfc6962.DefaultHasher)
+func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) error {
+	newCP, err := writer.Integrate(ctx, from, batch, s, rfc6962.DefaultHasher)
 	if err != nil {
 		klog.Errorf("Failed to integrate: %v", err)
 		return err

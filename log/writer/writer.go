@@ -1,17 +1,12 @@
-package log
+package writer
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
 	"github.com/transparency-dev/merkle/compact"
 	"github.com/transparency-dev/merkle/rfc6962"
-)
-
-var (
-	ErrSeqAlreadyAssigned = errors.New("already assigned")
 )
 
 type Batch struct {

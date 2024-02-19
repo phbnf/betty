@@ -31,7 +31,7 @@ func main() {
 		panic(fmt.Errorf("failed to make directory structure: %w", err))
 	}
 
-	s := posix.NewStorage(*path, log.Params{EntryBundleSize: *batchSize})
+	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize})
 	// Config lib
 	w := writer.NewWriter(*batchSize, *batchMaxAge, s.Sequence)
 
@@ -56,7 +56,6 @@ func main() {
 				}
 
 			}
-			return nil
 		})
 	}
 	eg.Wait()

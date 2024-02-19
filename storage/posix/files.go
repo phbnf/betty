@@ -32,21 +32,20 @@ const (
 // It leverages the POSIX atomic operations.
 type Storage struct {
 	sync.Mutex
-	Params log.Params
-	Path   string
+	params log.Params
+	path   string
 
 	cpFile   *os.File
 	latestCP f_log.Checkpoint
 }
 
-func NewStorage(path string, params log.Params) *Storage {
+// New creates a new POSIX storage.
+func New(path string, params log.Params) *Storage {
 	r := &Storage{
-		Path:   path,
-		Params: params,
+		path:   path,
+		params: params,
 	}
-	r.lockCP()
-	defer r.unlockCP()
-	if err := r.readCheckpoint(); err != nil {
+	if err := r.ReadCheckpoint(); err != nil {
 		if !errors.Is(os.ErrNotExist, err) {
 			panic(err)
 		}
@@ -54,13 +53,17 @@ func NewStorage(path string, params log.Params) *Storage {
 	return r
 }
 
+// lockCP places a POSIX advisory lock for the checkpoint.
+// Note that a) this is advisory, and b) we use an adjacent file to the checkpoint
+// (`checkpoint.lock`) to avoid inherent brittleness of the `fcntrl` API (*any* `Close`
+// operation on this file (even if it's a different FD) from this PID, or overwriting
+// of the file by *any* process breaks the lock.)
 func (s *Storage) lockCP() error {
-	if s.cpFile != nil {
-		panic(errors.New("already locked"))
-	}
-
 	var err error
-	s.cpFile, err = os.OpenFile(filepath.Join(s.Path, layout.CheckpointPath+".lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC, filePerm)
+	if s.cpFile != nil {
+		panic("not unlocked")
+	}
+	s.cpFile, err = os.OpenFile(filepath.Join(s.path, layout.CheckpointPath+".lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC, filePerm)
 	if err != nil {
 		return err
 	}
@@ -71,23 +74,31 @@ func (s *Storage) lockCP() error {
 		Start:  0,
 		Len:    0,
 	}
-	for syscall.FcntlFlock(s.cpFile.Fd(), syscall.F_SETLKW, &flockT) == syscall.EINTR {
+	for {
+		if err := syscall.FcntlFlock(s.cpFile.Fd(), syscall.F_SETLKW, &flockT); err != syscall.EINTR {
+			return err
+		}
 	}
-	return nil
 }
 
+// unlockCP unlocks the `checkpoint.lock` file.
 func (s *Storage) unlockCP() error {
 	if s.cpFile == nil {
 		panic(errors.New("not locked"))
 	}
-	f := s.cpFile
+	if err := s.cpFile.Close(); err != nil {
+		return err
+	}
 	s.cpFile = nil
-	return f.Close()
+	return nil
 }
 
 // Sequence commits to sequence numbers for batches of entries.
 // Returns the sequence number assigned to the first entry in the batch, or an error.
 func (s *Storage) Sequence(ctx context.Context, b writer.Batch) (uint64, error) {
+	// Double locking:
+	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
+	// - The POSIX `LockCP()` ensures that distinct tasks are serialised.
 	s.Lock()
 	if err := s.lockCP(); err != nil {
 		panic(err)
@@ -99,7 +110,7 @@ func (s *Storage) Sequence(ctx context.Context, b writer.Batch) (uint64, error) 
 		s.Unlock()
 	}()
 
-	if err := s.readCheckpoint(); err != nil {
+	if err := s.ReadCheckpoint(); err != nil {
 		return 0, err
 	}
 
@@ -111,31 +122,45 @@ func (s *Storage) Sequence(ctx context.Context, b writer.Batch) (uint64, error) 
 	return seq, nil
 }
 
+// GetEntryBundle retrieves the Nth entries bundle.
+// If size is != the max size of the bundle, a partial bundle is returned.
 func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byte, error) {
-	bd, bf := layout.SeqPath(s.Path, index)
-	if size < uint64(s.Params.EntryBundleSize) {
+	bd, bf := layout.SeqPath(s.path, index)
+	if size < uint64(s.params.EntryBundleSize) {
 		bf = fmt.Sprintf("%s.%d", bf, size)
 	}
 	return os.ReadFile(filepath.Join(bd, bf))
 }
 
+// sequenceBatch writes the entries from the provided batch into the entry bundle files of the log.
+//
+// This func starts filling entries bundles at the next available slot in the log, ensuring that the
+// sequenced entries are contiguous from the zeroth entry (i.e left-hand dense).
+// We try to minimise the number of partially complete entry bundles by writing entries in chunks rather
+// than one-by-one.
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
+	if len(batch.Entries) == 0 {
+		return 0, nil
+	}
 	seq := s.latestCP.Size
-	bundleIndex, entriesInBundle := seq/uint64(s.Params.EntryBundleSize), seq%uint64(s.Params.EntryBundleSize)
+	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
 	bundle := &bytes.Buffer{}
 	if entriesInBundle > 0 {
+		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
 		part, err := s.GetEntryBundle(ctx, bundleIndex, entriesInBundle)
 		if err != nil {
 			return 0, err
 		}
 		bundle.Write(part)
 	}
+	// Add new entries to the bundle
 	for _, e := range batch.Entries {
 		bundle.WriteString(base64.StdEncoding.EncodeToString(e))
 		bundle.WriteString("\n")
 		entriesInBundle++
-		if entriesInBundle == uint64(s.Params.EntryBundleSize) {
-			bd, bf := layout.SeqPath(s.Path, bundleIndex)
+		if entriesInBundle == uint64(s.params.EntryBundleSize) {
+			//  This bundle is full, so we need to write it out...
+			bd, bf := layout.SeqPath(s.path, bundleIndex)
 			if err := os.MkdirAll(bd, dirPerm); err != nil {
 				return 0, fmt.Errorf("failed to make seq directory structure: %w", err)
 			}
@@ -144,13 +169,16 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 					return 0, err
 				}
 			}
+			// ... and prepare the next entry bundle for any remaining entries in the batch
 			bundleIndex++
 			entriesInBundle = 0
 			bundle = &bytes.Buffer{}
 		}
 	}
+	// If we have a partial bundle remaining once we've added all the entries from the batch,
+	// this needs writing out too.
 	if entriesInBundle > 0 {
-		bd, bf := layout.SeqPath(s.Path, bundleIndex)
+		bd, bf := layout.SeqPath(s.path, bundleIndex)
 		bf = fmt.Sprintf("%s.%d", bf, entriesInBundle)
 		if err := os.MkdirAll(bd, dirPerm); err != nil {
 			return 0, fmt.Errorf("failed to make seq directory structure: %w", err)
@@ -162,9 +190,11 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		}
 	}
 
+	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
 	return seq, s.doIntegrate(ctx, seq, batch.Entries)
 }
 
+// doIntegrate handles integrating new entries into the log, and updating the checkpoint.
 func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) error {
 	newCP, err := writer.Integrate(ctx, from, batch, s, rfc6962.DefaultHasher)
 	if err != nil {
@@ -184,37 +214,12 @@ func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) 
 	return nil
 }
 
-// createExclusive creates the named file before writing the data in d to it.
-// It will error if the file already exists, or it's unable to fully write the
-// data & close the file.
-func (s *Storage) createExclusive(f string, d []byte) error {
-	tmpFile, err := os.CreateTemp(s.Path, "")
-	if err != nil {
-		return fmt.Errorf("unable to create temporary file: %w", err)
-	}
-	tmpName := tmpFile.Name()
-	n, err := tmpFile.Write(d)
-	if err != nil {
-		return fmt.Errorf("unable to write leafdata to temporary file: %w", err)
-	}
-	if got, want := n, len(d); got != want {
-		return fmt.Errorf("short write on leaf, wrote %d expected %d", got, want)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, f); err != nil {
-		return err
-	}
-	return nil
-}
-
 // GetTile returns the tile at the given tile-level and tile-index.
 // If no complete tile exists at that location, it will attempt to find a
 // partial tile for the given tree size at that location.
 func (s *Storage) GetTile(_ context.Context, level, index, logSize uint64) (*api.Tile, error) {
 	tileSize := layout.PartialTileSize(level, index, logSize)
-	p := filepath.Join(layout.TilePath(s.Path, level, index, tileSize))
+	p := filepath.Join(layout.TilePath(s.path, level, index, tileSize))
 	t, err := os.ReadFile(p)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -245,7 +250,7 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 		return fmt.Errorf("failed to marshal tile: %w", err)
 	}
 
-	tDir, tFile := layout.TilePath(s.Path, level, index, tileSize%256)
+	tDir, tFile := layout.TilePath(s.path, level, index, tileSize%256)
 	tPath := filepath.Join(tDir, tFile)
 
 	if err := os.MkdirAll(tDir, dirPerm); err != nil {
@@ -291,15 +296,16 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 
 // WriteCheckpoint stores a raw log checkpoint on disk.
 func (s *Storage) WriteCheckpoint(_ context.Context, newCPRaw []byte) error {
-	oPath := filepath.Join(s.Path, layout.CheckpointPath)
+	oPath := filepath.Join(s.path, layout.CheckpointPath)
 	if err := s.createExclusive(oPath, newCPRaw); err != nil {
 		return fmt.Errorf("failed to create checkpoint file: %w", err)
 	}
 	return nil
 }
 
-func (s *Storage) readCheckpoint() error {
-	b, err := os.ReadFile(filepath.Join(s.Path, layout.CheckpointPath))
+// Readcheckpoint returns the latest stored checkpoint.
+func (s *Storage) ReadCheckpoint() error {
+	b, err := os.ReadFile(filepath.Join(s.path, layout.CheckpointPath))
 	if err != nil {
 		if _, ok := err.(*os.PathError); ok {
 			return nil
@@ -318,10 +324,27 @@ func (s *Storage) readCheckpoint() error {
 	return nil
 }
 
-/*
-// ReadCheckpoint reads and returns the contents of the log checkpoint file.
-func ReadCheckpoint(rootDir string) ([]byte, error) {
-	s := filepath.Join(rootDir, layout.CheckpointPath)
-	return os.ReadFile(s)
+// createExclusive creates the named file before writing the data in d to it.
+// It will error if the file already exists, or it's unable to fully write the
+// data & close the file.
+func (s *Storage) createExclusive(f string, d []byte) error {
+	tmpFile, err := os.CreateTemp(s.path, "")
+	if err != nil {
+		return fmt.Errorf("unable to create temporary file: %w", err)
+	}
+	tmpName := tmpFile.Name()
+	n, err := tmpFile.Write(d)
+	if err != nil {
+		return fmt.Errorf("unable to write leafdata to temporary file: %w", err)
+	}
+	if got, want := n, len(d); got != want {
+		return fmt.Errorf("short write on leaf, wrote %d expected %d", got, want)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, f); err != nil {
+		return err
+	}
+	return nil
 }
-*/

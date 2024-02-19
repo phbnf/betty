@@ -21,7 +21,6 @@ type SequenceFunc func(context.Context, Batch) (uint64, error)
 func NewWriter(bufferSize int, maxAge time.Duration, s SequenceFunc) *Writer {
 	rf := compact.RangeFactory{Hash: rfc6962.DefaultHasher.HashChildren}
 	return &Writer{
-		rf: rf,
 		current: &pool{
 			Done:   make(chan struct{}),
 			cRange: rf.NewEmptyRange(0),
@@ -36,7 +35,6 @@ func NewWriter(bufferSize int, maxAge time.Duration, s SequenceFunc) *Writer {
 // Writer is a helper for adding entries to a log.
 type Writer struct {
 	sync.Mutex
-	rf         compact.RangeFactory
 	current    *pool
 	bufferSize int
 	maxAge     time.Duration
@@ -71,9 +69,8 @@ func (w *Writer) flushWithLock() {
 	w.flushTimer = nil
 	b := w.current
 	w.current = &pool{
-		Done:   make(chan struct{}),
-		cRange: w.rf.NewEmptyRange(0),
-		Born:   time.Now(),
+		Done: make(chan struct{}),
+		Born: time.Now(),
 	}
 	go func() {
 		b.FirstSeq, b.Err = w.seq(context.TODO(), Batch{Entries: b.Entries})

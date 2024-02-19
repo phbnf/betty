@@ -69,7 +69,6 @@ func main() {
 
 	eg, _ := errgroup.WithContext(ctx)
 
-	t := time.NewTicker(time.Second)
 	for i := 0; i < *numWriters; i++ {
 		eg.Go(func() error {
 			d := time.Second / time.Duration((*leavesPerSecond/2.0)+rand.Int63n(*leavesPerSecond)/2)
@@ -78,17 +77,12 @@ func main() {
 				e := newLeaf()
 				// submit leaf
 				n := time.Now()
-				seq, err := s.Sequence(ctx, e)
+				_, err := s.Sequence(ctx, e)
 				if err != nil {
 					klog.Infof("Error adding leaf: %v", err)
+					continue
 				}
-				select {
-				case <-t.C:
-					l.Add(time.Since(n))
-					klog.V(1).Infof("Just added to %d", seq)
-				default:
-				}
-
+				l.Add(time.Since(n))
 			}
 		})
 	}

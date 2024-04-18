@@ -13,6 +13,7 @@ import (
 	"github.com/AlCutter/betty/log"
 	"github.com/AlCutter/betty/storage/posix"
 	f_log "github.com/transparency-dev/formats/log"
+	"golang.org/x/mod/sumdb/note"
 	"k8s.io/klog/v2"
 )
 
@@ -25,6 +26,9 @@ var (
 	batchMaxAge     = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
 
 	listen = flag.String("listen", ":2024", "Address:port to listen on")
+
+	signer   = flag.String("log_signer", "PRIVATE+KEY+Test-Betty+df84580a+Afge8kCzBXU7jb3cV2Q363oNXCufJ6u9mjOY1BGRY9E2", "Log signer")
+	verifier = flag.String("log_verifier", "Test-Betty+df84580a+AQQASqPUZoIHcJAF5mBOryctwFdTV1E0GRY4kEAtTzwB", "log verifier")
 )
 
 type latency struct {
@@ -54,13 +58,28 @@ func (l *latency) String() string {
 	return fmt.Sprintf("[Mean: %v Min: %v Max %v]", l.total/time.Duration(l.n), l.min, l.max)
 }
 
+func keysFromFlag() (note.Signer, note.Verifier) {
+	sKey, err := note.NewSigner(*signer)
+	if err != nil {
+		klog.Exitf("Invalid signing key: %v", err)
+	}
+	vKey, err := note.NewVerifier(*verifier)
+	if err != nil {
+		klog.Exitf("Invalid verifier key: %v", err)
+	}
+	return sKey, vKey
+}
+
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
+	ctx := context.Background()
+
+	sKey, vKey := keysFromFlag()
+
 	if err := os.MkdirAll(*path, 0o755); err != nil {
 		panic(fmt.Errorf("failed to make directory structure: %w", err))
 	}
-	ctx := context.Background()
 
 	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge)
 	l := &latency{}

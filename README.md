@@ -3,12 +3,12 @@
 This repo contains a proof-of-concept for a light(er)-weight log based on tile storage.
 It's intended to serve as a toy to play around with ideas and shapes.
 
-It contains a single exectuable `cmd/leafcreator` which can be thought of as a:
+It contains a two exectuables:
 
-- HTTP frontend representing the "write API" for a log, receiving a configurable amount of add requests.
-- `Serverless-log`-like tool, adding local artefacts into a log.
+- `cmd/leafcreator` which is an in-process leaf-generator which writes directly to storage.
+- `cmd/bettyfe` which is a simple HTTP API with a single `/add` POST endpoint.
 
-This executable is used to exercise the other code, and enable experimentation with library/storage ideas and implementations.
+These executables are used to exercise the other code, and enable experimentation with library/storage ideas and implementations.
 
 ## Storage
 
@@ -56,6 +56,7 @@ I0219 12:01:27.964390  139881 main.go:122] CP size 4547776 (+53480); Latency: [M
 ```
 
 It's fine to run multiple concurrent instances too:
+
 ```bash
 ❯ go run ./cmd/leafcreator -num_writers=1000 --leaves_per_second=400 -batch_size=256
 I0219 12:02:08.214855  140182 main.go:122] CP size 4698792 (+71168); Latency: [Mean: 10.842655ms Min: 0s Max 10.842655ms]

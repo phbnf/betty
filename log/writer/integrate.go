@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 
-	f_log "github.com/transparency-dev/formats/log"
 	"github.com/transparency-dev/merkle"
 	"github.com/transparency-dev/merkle/compact"
 	"github.com/transparency-dev/serverless-log/api"
@@ -37,9 +36,6 @@ type IntegrateStorage interface {
 	// StoreTile stores the tile at the given level & index.
 	StoreTile(ctx context.Context, level, index uint64, tile *api.Tile) error
 
-	// WriteCheckpoint stores a newly updated log checkpoint.
-	WriteCheckpoint(ctx context.Context, newCPRaw []byte) error
-
 	GetEntryBundle(ctx context.Context, index uint64, size uint64) ([]byte, error)
 }
 
@@ -55,7 +51,7 @@ var (
 
 // Integrate adds all sequenced entries greater than fromSize into the tree.
 // Returns an updated Checkpoint, or an error.
-func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st IntegrateStorage, h merkle.LogHasher) (*f_log.Checkpoint, error) {
+func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st IntegrateStorage, h merkle.LogHasher) (uint64, []byte, error) {
 	getTile := func(l, i uint64) (*api.Tile, error) {
 		return st.GetTile(ctx, l, i, fromSize)
 	}
@@ -64,19 +60,19 @@ func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st Integrat
 		return getTile(l, i)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch compact range nodes: %w", err)
+		return 0, nil, fmt.Errorf("failed to fetch compact range nodes: %w", err)
 	}
 
 	rf := compact.RangeFactory{Hash: h.HashChildren}
 	baseRange, err := rf.NewRange(0, fromSize, hashes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create range covering existing log: %w", err)
+		return 0, nil, fmt.Errorf("failed to create range covering existing log: %w", err)
 	}
 
 	// Initialise a compact range representation, and verify the stored state.
 	r, err := baseRange.GetRootHash(nil)
 	if err != nil {
-		return nil, fmt.Errorf("invalid log state, unable to recalculate root: %w", err)
+		return 0, nil, fmt.Errorf("invalid log state, unable to recalculate root: %w", err)
 	}
 
 	klog.V(1).Infof("Loaded state with roothash %x", r)
@@ -87,27 +83,27 @@ func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st Integrat
 	if len(batch) == 0 {
 		klog.V(1).Infof("Nothing to do.")
 		// Nothing to do, nothing done.
-		return nil, nil
+		return fromSize, r, nil
 	}
 	for _, e := range batch {
 		lh := h.HashLeaf(e)
 		// Update range and set nodes
 		if err := newRange.Append(lh, tc.Visit); err != nil {
-			return nil, fmt.Errorf("newRange.Append(): %v", err)
+			return 0, nil, fmt.Errorf("newRange.Append(): %v", err)
 		}
 
 	}
 
 	// Merge the update range into the old tree
 	if err := baseRange.AppendRange(newRange, tc.Visit); err != nil {
-		return nil, fmt.Errorf("failed to merge new range onto existing log: %w", err)
+		return 0, nil, fmt.Errorf("failed to merge new range onto existing log: %w", err)
 	}
 
 	// Calculate the new root hash - don't pass in the tileCache visitor here since
 	// this will construct any ephemeral nodes and we do not want to store those.
 	newRoot, err := baseRange.GetRootHash(nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to calculate new root hash: %w", err)
+		return 0, nil, fmt.Errorf("failed to calculate new root hash: %w", err)
 	}
 
 	// All calculation is now complete, all that remains is to store the new
@@ -116,23 +112,11 @@ func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st Integrat
 
 	for k, t := range tc.m {
 		if err := st.StoreTile(ctx, k.level, k.index, t); err != nil {
-			return nil, fmt.Errorf("failed to store tile at level %d index %d: %w", k.level, k.index, err)
+			return 0, nil, fmt.Errorf("failed to store tile at level %d index %d: %w", k.level, k.index, err)
 		}
 	}
 
-	// Finally, return a new checkpoint struct to the caller, so they can sign &
-	// persist it.
-	// Since the sequencing is already completed (by the sequence tool), any
-	// failures to write/update the tree are idempotent and can be safely
-	// re-tried with a subsequent run of this method. Also, until WriteCheckpoint
-	// is successfully invoked, clients have no root hash for a larger tree so
-	// it's meaningless for them to attempt to construct inclusion/consistency
-	// proofs.
-	newCP := f_log.Checkpoint{
-		Hash: newRoot,
-		Size: baseRange.End(),
-	}
-	return &newCP, nil
+	return baseRange.End(), newRoot, nil
 }
 
 // tileKey is a level/index key for the tile cache below.

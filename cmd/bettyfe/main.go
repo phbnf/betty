@@ -55,6 +55,9 @@ func (l *latency) Add(d time.Duration) {
 func (l *latency) String() string {
 	l.Lock()
 	defer l.Unlock()
+	if l.n == 0 {
+		return "--"
+	}
 	return fmt.Sprintf("[Mean: %v Min: %v Max %v]", l.total/time.Duration(l.n), l.min, l.max)
 }
 
@@ -76,12 +79,20 @@ func main() {
 	ctx := context.Background()
 
 	sKey, vKey := keysFromFlag()
+	ct := currentTree(*path, vKey)
+	nt := newTree(*path, sKey)
 
 	if err := os.MkdirAll(*path, 0o755); err != nil {
-		panic(fmt.Errorf("failed to make directory structure: %w", err))
+		klog.Exitf("failed to make directory structure: %v", err)
+	}
+	if _, _, err := ct(); err != nil {
+		klog.Infof("ct: %v", err)
+		if err := nt(0, []byte("Empty")); err != nil {
+			klog.Exitf("Failed to initialise log: %v", err)
+		}
 	}
 
-	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge)
+	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt)
 	l := &latency{}
 
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
@@ -103,31 +114,59 @@ func main() {
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
 	})
 
-	go printStats(ctx, s, l)
+	go printStats(ctx, ct, l)
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
 		klog.Exitf("ListenAndServe: %v", err)
 	}
 }
 
-func printStats(ctx context.Context, s *posix.Storage, l *latency) {
+func currentTree(path string, verifier note.Verifier) posix.CurrentTreeFunc {
+	return func() (uint64, []byte, error) {
+		b, err := posix.ReadCheckpoint(path)
+		if err != nil {
+			return 0, nil, fmt.Errorf("ReadCheckpoint: %v", err)
+		}
+		cp, _, _, err := f_log.ParseCheckpoint(b, verifier.Name(), verifier)
+		if err != nil {
+			return 0, nil, err
+		}
+		return cp.Size, cp.Hash, nil
+	}
+}
+
+func newTree(path string, signer note.Signer) posix.NewTreeFunc {
+	return func(size uint64, hash []byte) error {
+		cp := &f_log.Checkpoint{
+			Origin: signer.Name(),
+			Size:   size,
+			Hash:   hash,
+		}
+		n, err := note.Sign(&note.Note{Text: string(cp.Marshal())}, signer)
+		if err != nil {
+			return err
+		}
+		return posix.WriteCheckpoint(path, n)
+	}
+}
+
+func printStats(ctx context.Context, s posix.CurrentTreeFunc, l *latency) {
 	interval := time.Second
-	var lastCP *f_log.Checkpoint
+	var lastSize uint64
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(interval):
-			cp, err := s.ReadCheckpoint()
+			size, _, err := s()
 			if err != nil {
 				klog.Errorf("Failed to get checkpoint: %v", err)
 				continue
 			}
-			if lastCP != nil {
-				added := cp.Size - lastCP.Size
-				klog.Infof("CP size %d (+%d); Latency: %v", cp.Size, added, l.String())
+			if lastSize > 0 {
+				added := size - lastSize
+				klog.Infof("CP size %d (+%d); Latency: %v", size, added, l.String())
 			}
-			lastCP = cp
-
+			lastSize = size
 		}
 	}
 }

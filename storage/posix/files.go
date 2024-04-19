@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,8 +19,6 @@ import (
 	"github.com/transparency-dev/serverless-log/api"
 	"github.com/transparency-dev/serverless-log/api/layout"
 	"k8s.io/klog/v2"
-
-	f_log "github.com/transparency-dev/formats/log"
 )
 
 const (
@@ -37,23 +34,35 @@ type Storage struct {
 	path   string
 	pool   *writer.Pool
 
-	cpFile   *os.File
-	latestCP f_log.Checkpoint
+	cpFile *os.File
+
+	curTree CurrentTreeFunc
+	newTree NewTreeFunc
+
+	curSize uint64
 }
 
+// NewTreeFunc is the signature of a function which receives information about newly integrated trees.
+type NewTreeFunc func(size uint64, root []byte) error
+
+// CurrentTree is the signature of a function which retrieves the current integrated tree size and root hash.
+type CurrentTreeFunc func() (uint64, []byte, error)
+
 // New creates a new POSIX storage.
-func New(path string, params log.Params, batchMaxAge time.Duration) *Storage {
+func New(path string, params log.Params, batchMaxAge time.Duration, curTree CurrentTreeFunc, newTree NewTreeFunc) *Storage {
+	curSize, _, err := curTree()
+	if err != nil {
+		panic(err)
+	}
 	r := &Storage{
-		path:   path,
-		params: params,
+		path:    path,
+		params:  params,
+		curSize: curSize,
+		curTree: curTree,
+		newTree: newTree,
 	}
 	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
 
-	if _, err := r.ReadCheckpoint(); err != nil {
-		if !errors.Is(os.ErrNotExist, err) {
-			panic(err)
-		}
-	}
 	return r
 }
 
@@ -134,14 +143,16 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		s.Unlock()
 	}()
 
-	if _, err := s.ReadCheckpoint(); err != nil {
+	size, _, err := s.curTree()
+	if err != nil {
 		return 0, err
 	}
+	s.curSize = size
 
 	if len(batch.Entries) == 0 {
 		return 0, nil
 	}
-	seq := s.latestCP.Size
+	seq := s.curSize
 	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
 	bundle := &bytes.Buffer{}
 	if entriesInBundle > 0 {
@@ -163,7 +174,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 			if err := os.MkdirAll(bd, dirPerm); err != nil {
 				return 0, fmt.Errorf("failed to make seq directory structure: %w", err)
 			}
-			if err := s.createExclusive(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
+			if err := createExclusive(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
 				if !errors.Is(os.ErrExist, err) {
 					return 0, err
 				}
@@ -182,7 +193,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		if err := os.MkdirAll(bd, dirPerm); err != nil {
 			return 0, fmt.Errorf("failed to make seq directory structure: %w", err)
 		}
-		if err := s.createExclusive(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
+		if err := createExclusive(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
 			if !errors.Is(os.ErrExist, err) {
 				return 0, err
 			}
@@ -195,20 +206,13 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 
 // doIntegrate handles integrating new entries into the log, and updating the checkpoint.
 func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) error {
-	newCP, err := writer.Integrate(ctx, from, batch, s, rfc6962.DefaultHasher)
+	newSize, newRoot, err := writer.Integrate(ctx, from, batch, s, rfc6962.DefaultHasher)
 	if err != nil {
 		klog.Errorf("Failed to integrate: %v", err)
 		return err
 	}
-	klog.V(1).Infof("NewCP: %d (%x)", newCP.Size, newCP.Hash)
-	newCPRaw, err := json.Marshal(newCP)
-	if err != nil {
-		klog.Errorf("Failed to marshall new checkpoint: %v", err)
-		return err
-	}
-	if err := s.WriteCheckpoint(ctx, newCPRaw); err != nil {
-		klog.Errorf("Failed to store new checkpoint: %v", err)
-		return err
+	if err := s.newTree(newSize, newRoot); err != nil {
+		return fmt.Errorf("newTree: %v", err)
 	}
 	return nil
 }
@@ -294,37 +298,23 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 }
 
 // WriteCheckpoint stores a raw log checkpoint on disk.
-func (s *Storage) WriteCheckpoint(_ context.Context, newCPRaw []byte) error {
-	oPath := filepath.Join(s.path, layout.CheckpointPath)
-	if err := s.createExclusive(oPath, newCPRaw); err != nil {
+func WriteCheckpoint(path string, newCPRaw []byte) error {
+	if err := createExclusive(filepath.Join(path, layout.CheckpointPath), newCPRaw); err != nil {
 		return fmt.Errorf("failed to create checkpoint file: %w", err)
 	}
 	return nil
 }
 
 // Readcheckpoint returns the latest stored checkpoint.
-func (s *Storage) ReadCheckpoint() (*f_log.Checkpoint, error) {
-	b, err := os.ReadFile(filepath.Join(s.path, layout.CheckpointPath))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) == 0 {
-		// uninitialised log
-		return nil, nil
-	}
-	cp := &f_log.Checkpoint{}
-	if err := json.Unmarshal(b, cp); err != nil {
-		return nil, err
-	}
-	s.latestCP = *cp
-	return cp, nil
+func ReadCheckpoint(path string) ([]byte, error) {
+	return os.ReadFile(filepath.Join(path, layout.CheckpointPath))
 }
 
-// createExclusive creates the named file before writing the data in d to it.
+// createExclusive creates a file at the given path and name before writing the data in d to it.
 // It will error if the file already exists, or it's unable to fully write the
 // data & close the file.
-func (s *Storage) createExclusive(f string, d []byte) error {
-	tmpFile, err := os.CreateTemp(s.path, "")
+func createExclusive(f string, d []byte) error {
+	tmpFile, err := os.CreateTemp(filepath.Dir(f), "")
 	if err != nil {
 		return fmt.Errorf("unable to create temporary file: %w", err)
 	}

@@ -113,6 +113,8 @@ func main() {
 		}
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
 	})
+	fs := http.FileServer(http.Dir(*path))
+	http.Handle("GET /", fs)
 
 	go printStats(ctx, ct, l)
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {

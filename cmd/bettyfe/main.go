@@ -4,14 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
-	"net/http"
+	"math/rand"
 	"sync"
 	"time"
 
 	"github.com/AlCutter/betty/log"
 	"github.com/AlCutter/betty/storage/azure"
 	"golang.org/x/mod/sumdb/note"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/klog/v2"
 )
 
@@ -19,7 +19,7 @@ var (
 	leavesPerSecond = flag.Int64("leaves_per_second", 10, "How many leaves to generate per second")
 	leafSize        = flag.Int("leaf_size", 1024, "Leaf size in bytes")
 	numWriters      = flag.Int("num_writers", 100, "Number of parallel writers")
-	path            = flag.String("path", "/logs", "Path to log root diretory")
+	path            = flag.String("path", "/tmp/log", "Path to log root diretory")
 	batchSize       = flag.Int("batch_size", 1, "Size of batch before flushing")
 	batchMaxAge     = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
 
@@ -27,6 +27,9 @@ var (
 
 	signer   = flag.String("log_signer", "PRIVATE+KEY+Test-Betty+df84580a+Afge8kCzBXU7jb3cV2Q363oNXCufJ6u9mjOY1BGRY9E2", "Log signer")
 	verifier = flag.String("log_verifier", "Test-Betty+df84580a+AQQASqPUZoIHcJAF5mBOryctwFdTV1E0GRY4kEAtTzwB", "log verifier")
+
+	accountName = flag.String("azure_account", "betty", "azure account name")
+	accountKey  = flag.String("azure_key", "", "azure account key")
 )
 
 type latency struct {
@@ -77,32 +80,60 @@ func main() {
 	ctx := context.Background()
 
 	sKey, vKey := keysFromFlag()
-	s := azure.New(ctx, *path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, sKey, vKey)
+	s := azure.New(ctx, *path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, sKey, vKey, *accountName, *accountKey)
 	l := &latency{}
 
-	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
-		n := time.Now()
-		defer func() { l.Add(time.Since(n)) }()
+	//http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
+	//	n := time.Now()
+	//	defer func() { l.Add(time.Since(n)) }()
 
-		b, err := io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		defer r.Body.Close()
-		idx, err := s.Sequence(ctx, b)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(fmt.Sprintf("Failed to sequence entry: %v", err)))
-			return
-		}
-		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
-	})
+	//	b, err := io.ReadAll(r.Body)
+	//	if err != nil {
+	//		w.WriteHeader(http.StatusInternalServerError)
+	//		return
+	//	}
+	//	defer r.Body.Close()
+	//	idx, err := s.Sequence(ctx, b)
+	//	if err != nil {
+	//		w.WriteHeader(http.StatusInternalServerError)
+	//		w.Write([]byte(fmt.Sprintf("Failed to sequence entry: %v", err)))
+	//		return
+	//	}
+	//	w.Write([]byte(fmt.Sprintf("%d\n", idx)))
+	//})
 
 	go printStats(ctx, s, l)
-	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
-		klog.Exitf("ListenAndServe: %v", err)
+	//if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
+	//	klog.Exitf("ListenAndServe: %v", err)
+	//}
+
+	eg, _ := errgroup.WithContext(ctx)
+	for i := 0; i < *numWriters; i++ {
+		eg.Go(func() error {
+			d := time.Second / time.Duration((*leavesPerSecond/2.0)+rand.Int63n(*leavesPerSecond)/2)
+			for {
+				time.Sleep(d)
+				e := newLeaf()
+				// submit leaf
+				n := time.Now()
+				_, err := s.Sequence(ctx, e)
+				if err != nil {
+					klog.Infof("Error adding leaf: %v", err)
+					continue
+				}
+				l.Add(time.Since(n))
+			}
+		})
 	}
+	eg.Wait()
+}
+
+func newLeaf() []byte {
+	r := make([]byte, *leafSize)
+	if _, err := rand.Read(r); err != nil {
+		panic(err)
+	}
+	return r
 }
 
 // CAREFUL: This means that we pass the lock to printStats, change this

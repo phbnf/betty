@@ -60,7 +60,10 @@ func main() {
 	}
 	ctx := context.Background()
 
-	s := azure.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge)
+	ct := currentTree(*path, vKey)
+	nt := newTree(*path, sKey)
+
+	s := azure.New(ctx, *path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, signer, verifier)
 
 	l := &latency{}
 

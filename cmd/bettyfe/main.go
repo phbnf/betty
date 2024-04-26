@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/AlCutter/betty/log"
-	"github.com/AlCutter/betty/storage/posix"
-	f_log "github.com/transparency-dev/formats/log"
+	"github.com/AlCutter/betty/storage/azure"
 	"golang.org/x/mod/sumdb/note"
 	"k8s.io/klog/v2"
 )
@@ -79,20 +77,7 @@ func main() {
 	ctx := context.Background()
 
 	sKey, vKey := keysFromFlag()
-	ct := currentTree(*path, vKey)
-	nt := newTree(*path, sKey)
-
-	if err := os.MkdirAll(*path, 0o755); err != nil {
-		klog.Exitf("failed to make directory structure: %v", err)
-	}
-	if _, _, err := ct(); err != nil {
-		klog.Infof("ct: %v", err)
-		if err := nt(0, []byte("Empty")); err != nil {
-			klog.Exitf("Failed to initialise log: %v", err)
-		}
-	}
-
-	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt)
+	s := azure.New(ctx, *path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, sKey, vKey)
 	l := &latency{}
 
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
@@ -114,42 +99,14 @@ func main() {
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
 	})
 
-	go printStats(ctx, ct, l)
+	go printStats(ctx, s, l)
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
 		klog.Exitf("ListenAndServe: %v", err)
 	}
 }
 
-func currentTree(path string, verifier note.Verifier) posix.CurrentTreeFunc {
-	return func() (uint64, []byte, error) {
-		b, err := posix.ReadCheckpoint(path)
-		if err != nil {
-			return 0, nil, fmt.Errorf("ReadCheckpoint: %v", err)
-		}
-		cp, _, _, err := f_log.ParseCheckpoint(b, verifier.Name(), verifier)
-		if err != nil {
-			return 0, nil, err
-		}
-		return cp.Size, cp.Hash, nil
-	}
-}
-
-func newTree(path string, signer note.Signer) posix.NewTreeFunc {
-	return func(size uint64, hash []byte) error {
-		cp := &f_log.Checkpoint{
-			Origin: signer.Name(),
-			Size:   size,
-			Hash:   hash,
-		}
-		n, err := note.Sign(&note.Note{Text: string(cp.Marshal())}, signer)
-		if err != nil {
-			return err
-		}
-		return posix.WriteCheckpoint(path, n)
-	}
-}
-
-func printStats(ctx context.Context, s posix.CurrentTreeFunc, l *latency) {
+// CAREFUL: This means that we pass the lock to printStats, change this
+func printStats(ctx context.Context, s *azure.Storage, l *latency) {
 	interval := time.Second
 	var lastSize uint64
 	for {
@@ -157,7 +114,7 @@ func printStats(ctx context.Context, s posix.CurrentTreeFunc, l *latency) {
 		case <-ctx.Done():
 			return
 		case <-time.After(interval):
-			size, _, err := s()
+			size, _, err := s.CurTree(ctx)
 			if err != nil {
 				klog.Errorf("Failed to get checkpoint: %v", err)
 				continue

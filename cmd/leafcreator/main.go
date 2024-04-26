@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/AlCutter/betty/log"
-	"github.com/AlCutter/betty/storage/posix"
+	"github.com/AlCutter/betty/storage/azure"
 	f_log "github.com/transparency-dev/formats/log"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/klog/v2"
@@ -60,7 +60,7 @@ func main() {
 	}
 	ctx := context.Background()
 
-	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge)
+	s := azure.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge)
 
 	l := &latency{}
 
@@ -97,7 +97,7 @@ func newLeaf() []byte {
 	return r
 }
 
-func printStats(ctx context.Context, s *posix.Storage, l *latency) {
+func printStats(ctx context.Context, s *azure.Storage, l *latency) {
 	interval := time.Second
 	var lastCP *f_log.Checkpoint
 	for {
@@ -105,7 +105,7 @@ func printStats(ctx context.Context, s *posix.Storage, l *latency) {
 		case <-ctx.Done():
 			return
 		case <-time.After(interval):
-			cp, err := s.ReadCheckpoint()
+			cp, err := s.ReadCheckpoint(ctx)
 			if err != nil {
 				klog.Errorf("Failed to get checkpoint: %v", err)
 				continue

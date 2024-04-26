@@ -171,9 +171,6 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		if entriesInBundle == uint64(s.params.EntryBundleSize) {
 			//  This bundle is full, so we need to write it out...
 			bd, bf := layout.SeqPath(s.path, bundleIndex)
-			if err := os.MkdirAll(bd, dirPerm); err != nil {
-				return 0, fmt.Errorf("failed to make seq directory structure: %w", err)
-			}
 			if err := createExclusive(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
 				if !errors.Is(os.ErrExist, err) {
 					return 0, err

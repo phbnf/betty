@@ -31,6 +31,15 @@ var (
 	verifier = flag.String("log_verifier", "Test-Betty+df84580a+AQQASqPUZoIHcJAF5mBOryctwFdTV1E0GRY4kEAtTzwB", "log verifier")
 )
 
+// Storage defines the explicit interface that storage implementations must implement for the HTTP handler here.
+// In addition, they'll need to implement the IntegrateStorage methods in log/writer/integrate.go too.
+type Storage interface {
+	// Sequence assigns the provided leaf data to an index in the log, returning
+	// that index once it's durably committed.
+	// Implementations are expected to integrate these new entries in a "timely" fashion.
+	Sequence(context.Context, []byte) (uint64, error)
+}
+
 type latency struct {
 	sync.Mutex
 	total time.Duration
@@ -92,7 +101,7 @@ func main() {
 		}
 	}
 
-	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt)
+	var s Storage = posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt)
 	l := &latency{}
 
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {

@@ -38,13 +38,11 @@ type Storage struct {
 	signer   note.Signer
 	verifier note.Verifier
 
-	client        *container.Client
-	cpClient      *blockblob.Client
-	lease         *lease.BlobClient
-	leaseID       *string
-	containerName string
-	blobName      string
-	path          string
+	client   *container.Client
+	cpClient *blockblob.Client
+	lease    *lease.BlobClient
+	leaseID  *string
+	path     string
 
 	curSize uint64
 }
@@ -82,7 +80,7 @@ func New(ctx context.Context, tpath string, params log.Params, batchMaxAge time.
 	}
 	r.lease = blobClient
 	r.lockCP(ctx)
-	if err := r.NewTree(ctx, 0, []byte("Empty"), false); err != nil {
+	if err := r.NewTree(ctx, 0, []byte("Empty")); err != nil {
 		panic(err)
 	}
 	curSize, _, err := r.CurTree(ctx)
@@ -228,7 +226,7 @@ func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) 
 		klog.Errorf("Failed to integrate: %v", err)
 		return err
 	}
-	if err := s.NewTree(ctx, newSize, newRoot, false); err != nil {
+	if err := s.NewTree(ctx, newSize, newRoot); err != nil {
 		return fmt.Errorf("newTree: %v", err)
 	}
 	return nil
@@ -342,7 +340,7 @@ func (s *Storage) CurTree(ctx context.Context) (uint64, []byte, error) {
 	return cp.Size, cp.Hash, nil
 }
 
-func (s *Storage) NewTree(ctx context.Context, size uint64, hash []byte, noLease bool) error {
+func (s *Storage) NewTree(ctx context.Context, size uint64, hash []byte) error {
 	cp := &f_log.Checkpoint{
 		Origin: s.signer.Name(),
 		Size:   size,
@@ -351,9 +349,6 @@ func (s *Storage) NewTree(ctx context.Context, size uint64, hash []byte, noLease
 	n, err := note.Sign(&note.Note{Text: string(cp.Marshal())}, s.signer)
 	if err != nil {
 		return err
-	}
-	if noLease {
-		return s.WriteCheckpointNoLease(ctx, n)
 	}
 	return s.WriteCheckpoint(ctx, n)
 }

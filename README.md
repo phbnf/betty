@@ -3,12 +3,11 @@
 This repo contains a proof-of-concept for a light(er)-weight log based on tile storage.
 It's intended to serve as a toy to play around with ideas and shapes.
 
-It contains a two exectuables:
+It contains an exectuable:
 
-- `cmd/leafcreator` which is an in-process leaf-generator which writes directly to storage.
-- `cmd/bettyfe` which is a simple HTTP API with a single `/add` POST endpoint.
+- `cmd/bettyfe` which is an in-process leaf-generator, which writes directly to storage, with a simple HTTP API providing a single `/add` POST endpoint.
 
-These executables are used to exercise the other code, and enable experimentation with library/storage ideas and implementations.
+This exectuable is used to exercise the other code, and enable experimentation with library/storage ideas and implementations.
 
 ## Storage
 

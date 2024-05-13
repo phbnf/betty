@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/AlCutter/betty/log"
@@ -94,37 +93,38 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 // operation on this file (even if it's a different FD) from this PID, or overwriting
 // of the file by *any* process breaks the lock.)
 func (s *Storage) lockCP() error {
-	var err error
-	if s.cpFile != nil {
-		panic("not unlocked")
-	}
-	s.cpFile, err = os.OpenFile(filepath.Join(s.path, layout.CheckpointPath+".lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC, filePerm)
-	if err != nil {
-		return err
-	}
+	return nil
+	// var err error
+	// if s.cpFile != nil {
+	// 	panic("not unlocked")
+	// }
+	// s.cpFile, err = os.OpenFile(filepath.Join(s.path, layout.CheckpointPath+".lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC, filePerm)
+	// if err != nil {
+	// 	return err
+	// }
 
-	flockT := syscall.Flock_t{
-		Type:   syscall.F_WRLCK,
-		Whence: io.SeekStart,
-		Start:  0,
-		Len:    0,
-	}
-	for {
-		if err := syscall.FcntlFlock(s.cpFile.Fd(), syscall.F_SETLKW, &flockT); err != syscall.EINTR {
-			return err
-		}
-	}
+	// flockT := syscall.Flock_t{
+	// 	Type:   syscall.F_WRLCK,
+	// 	Whence: io.SeekStart,
+	// 	Start:  0,
+	// 	Len:    0,
+	// }
+	// for {
+	// 	if err := syscall.FcntlFlock(s.cpFile.Fd(), syscall.F_SETLKW, &flockT); err != syscall.EINTR {
+	// 		return err
+	// 	}
+	// }
 }
 
 // unlockCP unlocks the `checkpoint.lock` file.
 func (s *Storage) unlockCP() error {
-	if s.cpFile == nil {
-		panic(errors.New("not locked"))
-	}
-	if err := s.cpFile.Close(); err != nil {
-		return err
-	}
-	s.cpFile = nil
+	//if s.cpFile == nil {
+	//	panic(errors.New("not locked"))
+	//}
+	//if err := s.cpFile.Close(); err != nil {
+	//	return err
+	//}
+	//s.cpFile = nil
 	return nil
 }
 

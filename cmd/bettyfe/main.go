@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/AlCutter/betty/log"
-	"github.com/AlCutter/betty/storage/posix"
+	posix "github.com/AlCutter/betty/storage/aws"
 	f_log "github.com/transparency-dev/formats/log"
 	"golang.org/x/mod/sumdb/note"
 	"k8s.io/klog/v2"
@@ -29,6 +29,8 @@ var (
 
 	signer   = flag.String("log_signer", "PRIVATE+KEY+Test-Betty+df84580a+Afge8kCzBXU7jb3cV2Q363oNXCufJ6u9mjOY1BGRY9E2", "Log signer")
 	verifier = flag.String("log_verifier", "Test-Betty+df84580a+AQQASqPUZoIHcJAF5mBOryctwFdTV1E0GRY4kEAtTzwB", "log verifier")
+
+	bucketName = flag.String("bucket", "/tmp/log", "Bucket name")
 )
 
 type latency struct {
@@ -79,7 +81,7 @@ func main() {
 	ctx := context.Background()
 
 	sKey, vKey := keysFromFlag()
-	ct := currentTree(*path, vKey)
+	ct := currentTree(vKey)
 	nt := newTree(*path, sKey)
 
 	if err := os.MkdirAll(*path, 0o755); err != nil {
@@ -92,7 +94,7 @@ func main() {
 		}
 	}
 
-	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt)
+	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt, *bucketName)
 	l := &latency{}
 
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
@@ -120,13 +122,9 @@ func main() {
 	}
 }
 
-func currentTree(path string, verifier note.Verifier) posix.CurrentTreeFunc {
-	return func() (uint64, []byte, error) {
-		b, err := posix.ReadCheckpoint(path)
-		if err != nil {
-			return 0, nil, fmt.Errorf("ReadCheckpoint: %v", err)
-		}
-		cp, _, _, err := f_log.ParseCheckpoint(b, verifier.Name(), verifier)
+func currentTree(verifier note.Verifier) aws.CurrentTreeFunc {
+	return func(cp []byte) (uint64, []byte, error) {
+		cp, _, _, err := f_log.ParseCheckpoint(cp, verifier.Name(), verifier)
 		if err != nil {
 			return 0, nil, err
 		}

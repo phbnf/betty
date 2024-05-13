@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/AlCutter/betty/log"
-	posix "github.com/AlCutter/betty/storage/aws"
+	aws "github.com/AlCutter/betty/storage/aws"
 	f_log "github.com/transparency-dev/formats/log"
 	"golang.org/x/mod/sumdb/note"
 	"k8s.io/klog/v2"
@@ -84,18 +83,15 @@ func main() {
 	ct := currentTree(vKey)
 	nt := newTree(*path, sKey)
 
-	if err := os.MkdirAll(*path, 0o755); err != nil {
-		klog.Exitf("failed to make directory structure: %v", err)
-	}
-	if _, _, err := ct(); err != nil {
-		klog.Infof("ct: %v", err)
-		if err := nt(0, []byte("Empty")); err != nil {
+	s := aws.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt, *bucketName)
+	l := &latency{}
+
+	if _, err := s.ReadCheckpoint(); err != nil {
+		klog.Infof("ReadCheckpoint: %v", err)
+		if err := s.NewTree(0, []byte("Empty")); err != nil {
 			klog.Exitf("Failed to initialise log: %v", err)
 		}
 	}
-
-	s := posix.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt, *bucketName)
-	l := &latency{}
 
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
 		n := time.Now()
@@ -116,15 +112,15 @@ func main() {
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
 	})
 
-	go printStats(ctx, ct, l)
+	go printStats(ctx, s, ct, l)
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
 		klog.Exitf("ListenAndServe: %v", err)
 	}
 }
 
 func currentTree(verifier note.Verifier) aws.CurrentTreeFunc {
-	return func(cp []byte) (uint64, []byte, error) {
-		cp, _, _, err := f_log.ParseCheckpoint(cp, verifier.Name(), verifier)
+	return func(cpb []byte) (uint64, []byte, error) {
+		cp, _, _, err := f_log.ParseCheckpoint(cpb, verifier.Name(), verifier)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -132,8 +128,8 @@ func currentTree(verifier note.Verifier) aws.CurrentTreeFunc {
 	}
 }
 
-func newTree(path string, signer note.Signer) posix.NewTreeFunc {
-	return func(size uint64, hash []byte) error {
+func newTree(path string, signer note.Signer) func(size uint64, hash []byte) ([]byte, error) {
+	return func(size uint64, hash []byte) ([]byte, error) {
 		cp := &f_log.Checkpoint{
 			Origin: signer.Name(),
 			Size:   size,
@@ -141,13 +137,13 @@ func newTree(path string, signer note.Signer) posix.NewTreeFunc {
 		}
 		n, err := note.Sign(&note.Note{Text: string(cp.Marshal())}, signer)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return posix.WriteCheckpoint(path, n)
+		return n, nil
 	}
 }
 
-func printStats(ctx context.Context, s posix.CurrentTreeFunc, l *latency) {
+func printStats(ctx context.Context, s *aws.Storage, cpf aws.CurrentTreeFunc, l *latency) {
 	interval := time.Second
 	var lastSize uint64
 	for {
@@ -155,7 +151,11 @@ func printStats(ctx context.Context, s posix.CurrentTreeFunc, l *latency) {
 		case <-ctx.Done():
 			return
 		case <-time.After(interval):
-			size, _, err := s()
+			currCP, err := s.ReadCheckpoint()
+			if err != nil {
+				klog.Fatalf("Couldn't load checkpoint:  %v", err)
+			}
+			size, _, err := cpf(currCP)
 			if err != nil {
 				klog.Errorf("Failed to get checkpoint: %v", err)
 				continue

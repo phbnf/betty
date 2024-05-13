@@ -49,7 +49,7 @@ type Storage struct {
 }
 
 // NewTreeFunc is the signature of a function which receives information about newly integrated trees.
-type NewTreeFunc func(size uint64, root []byte) error
+type NewTreeFunc func(size uint64, root []byte) ([]byte, error)
 
 // CurrentTree is the signature of a function which retrieves the current integrated tree size and root hash.
 type CurrentTreeFunc func([]byte) (uint64, []byte, error)
@@ -72,11 +72,16 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 		s3:      *s3Client,
 	}
 	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
-	currCP, err := r.ReadCheckpoint(filepath.Join(r.path, layout.CheckpointPath))
+
+	currCP, err := r.ReadCheckpoint()
 	if err != nil {
 		klog.Fatalf("Couldn't load checkpoint:  %v", err)
 	}
 	curSize, _, err := curTree(currCP)
+	if err != nil {
+		klog.Fatalf("Can't get current tree: %v", err)
+	}
+
 	r.curSize = curSize
 
 	return r
@@ -159,7 +164,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		s.Unlock()
 	}()
 
-	currCP, err := s.ReadCheckpoint(filepath.Join(s.path, layout.CheckpointPath))
+	currCP, err := s.ReadCheckpoint()
 	if err != nil {
 		klog.Fatalf("Couldn't load checkpoint:  %v", err)
 	}
@@ -232,7 +237,7 @@ func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) 
 		klog.Errorf("Failed to integrate: %v", err)
 		return err
 	}
-	if err := s.newTree(newSize, newRoot); err != nil {
+	if err := s.NewTree(newSize, newRoot); err != nil {
 		return fmt.Errorf("newTree: %v", err)
 	}
 	return nil
@@ -319,7 +324,8 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 }
 
 // WriteCheckpoint stores a raw log checkpoint on disk.
-func (s *Storage) WriteCheckpoint(path string, newCPRaw []byte) error {
+func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
+	path := filepath.Join(s.path, layout.CheckpointPath)
 	_, err := s.s3.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(path),
@@ -332,7 +338,8 @@ func (s *Storage) WriteCheckpoint(path string, newCPRaw []byte) error {
 }
 
 // Readcheckpoint returns the latest stored checkpoint.
-func (s *Storage) ReadCheckpoint(path string) ([]byte, error) {
+func (s *Storage) ReadCheckpoint() ([]byte, error) {
+	path := filepath.Join(s.path, layout.CheckpointPath)
 	result, err := s.s3.GetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(path),
@@ -349,6 +356,14 @@ func (s *Storage) ReadCheckpoint(path string) ([]byte, error) {
 		return nil, err
 	}
 	return body, nil
+}
+
+func (s *Storage) NewTree(size uint64, hash []byte) error {
+	cpRaw, err := s.newTree(size, hash)
+	if err != nil {
+		klog.Infof("could not create new tree: %v", err)
+	}
+	return s.WriteCheckpoint(cpRaw)
 }
 
 // createExclusive creates a file at the given path and name before writing the data in d to it.

@@ -57,6 +57,7 @@ type CurrentTreeFunc func([]byte) (uint64, []byte, error)
 // New creates a new POSIX storage.
 func New(path string, params log.Params, batchMaxAge time.Duration, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string) *Storage {
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
+	sdkConfig.Region = "us-east-1"
 	if err != nil {
 		fmt.Println("Couldn't load default configuration. Have you set up your AWS account?")
 		fmt.Println(err)
@@ -75,11 +76,11 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 
 	currCP, err := r.ReadCheckpoint()
 	if err != nil {
-		klog.Fatalf("Couldn't load checkpoint:  %v", err)
+		klog.Infof("Couldn't load checkpoint:  %v", err)
 	}
 	curSize, _, err := curTree(currCP)
 	if err != nil {
-		klog.Fatalf("Can't get current tree: %v", err)
+		klog.Infof("Can't get current tree: %v", err)
 	}
 
 	r.curSize = curSize

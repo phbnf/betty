@@ -300,23 +300,7 @@ func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 
 // Readcheckpoint returns the latest stored checkpoint.
 func (s *Storage) ReadCheckpoint() ([]byte, error) {
-	path := filepath.Join(s.path, layout.CheckpointPath)
-	result, err := s.s3.GetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(path),
-	})
-
-	if err != nil {
-		klog.Infof("Couldn't get object %v:%v. Here's why: %v\n", s.bucket, path, err)
-		return nil, err
-	}
-	defer result.Body.Close()
-	body, err := io.ReadAll(result.Body)
-	if err != nil {
-		klog.Infof("Couldn't read object body from %v. Here's why: %v\n", path, err)
-		return nil, err
-	}
-	return body, nil
+	return s.ReadFile(layout.CheckpointPath)
 }
 
 func (s *Storage) NewTree(size uint64, hash []byte) error {
@@ -352,7 +336,7 @@ func createExclusive(f string, d []byte) error {
 	return nil
 }
 
-// WriteCheckpoint stores a raw log checkpoint on disk.
+// WriteFile stores a file on S3.
 func (s *Storage) WriteFile(path string, data []byte) error {
 	fullPath := filepath.Join(s.path, path)
 	_, err := s.s3.PutObject(context.TODO(), &s3.PutObjectInput{
@@ -364,4 +348,25 @@ func (s *Storage) WriteFile(path string, data []byte) error {
 		klog.Infof("Couldn't write data at path %s: %v", path, err)
 	}
 	return nil
+}
+
+// ReadFile reas a file from S3.
+func (s *Storage) ReadFile(path string) ([]byte, error) {
+	fullPath := filepath.Join(s.path, path)
+	result, err := s.s3.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(fullPath),
+	})
+
+	if err != nil {
+		klog.Infof("Couldn't get object %v:%v. Here's why: %v\n", s.bucket, path, err)
+		return nil, err
+	}
+	defer result.Body.Close()
+	body, err := io.ReadAll(result.Body)
+	if err != nil {
+		klog.Infof("Couldn't read object body from %v. Here's why: %v\n", path, err)
+		return nil, err
+	}
+	return body, nil
 }

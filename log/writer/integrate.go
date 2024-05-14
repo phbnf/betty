@@ -18,8 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/transparency-dev/merkle"
 	"github.com/transparency-dev/merkle/compact"
 	"github.com/transparency-dev/serverless-log/api"
@@ -156,7 +156,9 @@ func (tc tileCache) Visit(id compact.NodeID, hash []byte) {
 		var err error
 		tile, err = tc.getTile(tileLevel, tileIndex)
 		if err != nil {
-			if !os.IsNotExist(err) {
+			var nske *types.NoSuchKey
+			fmt.Println(errors.As(err, &nske))
+			if !errors.As(err, &nske) {
 				panic(err)
 			}
 			// This is a brand new tile.

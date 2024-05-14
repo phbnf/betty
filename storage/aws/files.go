@@ -326,13 +326,7 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 
 // WriteCheckpoint stores a raw log checkpoint on disk.
 func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
-	path := filepath.Join(s.path, layout.CheckpointPath)
-	_, err := s.s3.PutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(path),
-		Body:   bytes.NewReader(newCPRaw),
-	})
-	if err != nil {
+	if err := s.WriteFile(layout.CheckpointPath, newCPRaw); err != nil {
 		klog.Infof("Couldn't write checkpoint: %v", err)
 	}
 	return nil
@@ -388,6 +382,20 @@ func createExclusive(f string, d []byte) error {
 	}
 	if err := os.Rename(tmpName, f); err != nil {
 		return err
+	}
+	return nil
+}
+
+// WriteCheckpoint stores a raw log checkpoint on disk.
+func (s *Storage) WriteFile(path string, data []byte) error {
+	fullPath := filepath.Join(s.path, path)
+	_, err := s.s3.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(fullPath),
+		Body:   bytes.NewReader(data),
+	})
+	if err != nil {
+		klog.Infof("Couldn't write data at path %s: %v", path, err)
 	}
 	return nil
 }

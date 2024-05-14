@@ -205,6 +205,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 			if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
 				return 0, err
 			}
+			// ... and prepare the next entry bundle for any remaining entries in the batch
 			bundleIndex++
 			entriesInBundle = 0
 			bundle = &bytes.Buffer{}
@@ -249,6 +250,7 @@ func (s *Storage) GetTile(_ context.Context, level, index, logSize uint64) (*api
 	t, err := s.ReadFile(p)
 	if err != nil {
 		var nske *types.NoSuchKey
+		fmt.Println(errors.As(err, &nske))
 		if !errors.As(err, &nske) {
 			return nil, fmt.Errorf("failed to read tile at %q: %w", p, err)
 		}

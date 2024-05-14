@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/transparency-dev/merkle/rfc6962"
 	"github.com/transparency-dev/serverless-log/api"
 	"github.com/transparency-dev/serverless-log/api/layout"
@@ -249,10 +250,11 @@ func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) 
 // partial tile for the given tree size at that location.
 func (s *Storage) GetTile(_ context.Context, level, index, logSize uint64) (*api.Tile, error) {
 	tileSize := layout.PartialTileSize(level, index, logSize)
-	p := filepath.Join(layout.TilePath(s.path, level, index, tileSize))
-	t, err := os.ReadFile(p)
+	p := filepath.Join(layout.TilePath("", level, index, tileSize))
+	t, err := s.ReadFile(p)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
+		var nske *types.NoSuchKey
+		if !errors.As(err, &nske) {
 			return nil, fmt.Errorf("failed to read tile at %q: %w", p, err)
 		}
 		return nil, err

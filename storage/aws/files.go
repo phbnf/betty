@@ -280,45 +280,11 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 		return fmt.Errorf("failed to marshal tile: %w", err)
 	}
 
-	tDir, tFile := layout.TilePath(s.path, level, index, tileSize%256)
+	tDir, tFile := layout.TilePath("", level, index, tileSize%256)
 	tPath := filepath.Join(tDir, tFile)
 
-	if err := os.MkdirAll(tDir, dirPerm); err != nil {
-		return fmt.Errorf("failed to create directory %q: %w", tDir, err)
-	}
-
-	// TODO(al): use unlinked temp file
-	temp := fmt.Sprintf("%s.temp", tPath)
-	if err := os.WriteFile(temp, t, filePerm); err != nil {
-		return fmt.Errorf("failed to write temporary tile file: %w", err)
-	}
-	if err := os.Rename(temp, tPath); err != nil {
-		if !errors.Is(os.ErrExist, err) {
-			return fmt.Errorf("failed to rename temporary tile file: %w", err)
-		}
-		os.Remove(temp)
-	}
-
-	if tileSize == 256 {
-		partials, err := filepath.Glob(fmt.Sprintf("%s.*", tPath))
-		if err != nil {
-			return fmt.Errorf("failed to list partial tiles for clean up; %w", err)
-		}
-		// Clean up old partial tiles by symlinking them to the new full tile.
-		for _, p := range partials {
-			klog.V(2).Infof("relink partial %s to %s", p, tPath)
-			// We have to do a little dance here to get POSIX atomicity:
-			// 1. Create a new temporary symlink to the full tile
-			// 2. Rename the temporary symlink over the top of the old partial tile
-			tmp := fmt.Sprintf("%s.link", tPath)
-			_ = os.Remove(tmp)
-			if err := os.Symlink(tPath, tmp); err != nil {
-				return fmt.Errorf("failed to create temp link to full tile: %w", err)
-			}
-			if err := os.Rename(tmp, p); err != nil {
-				return fmt.Errorf("failed to rename temp link over partial tile: %w", err)
-			}
-		}
+	if err := s.WriteFile(tPath, t); err != nil {
+		return err
 	}
 
 	return nil

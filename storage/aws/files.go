@@ -138,11 +138,11 @@ func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
 // GetEntryBundle retrieves the Nth entries bundle.
 // If size is != the max size of the bundle, a partial bundle is returned.
 func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byte, error) {
-	bd, bf := layout.SeqPath(s.path, index)
+	bd, bf := layout.SeqPath("", index)
 	if size < uint64(s.params.EntryBundleSize) {
 		bf = fmt.Sprintf("%s.%d", bf, size)
 	}
-	return os.ReadFile(filepath.Join(bd, bf))
+	return s.ReadFile(filepath.Join(bd, bf))
 }
 
 // sequenceBatch writes the entries from the provided batch into the entry bundle files of the log.

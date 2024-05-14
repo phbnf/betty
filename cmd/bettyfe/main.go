@@ -91,6 +91,7 @@ func main() {
 		if err := s.NewTree(0, []byte("Empty")); err != nil {
 			klog.Exitf("Failed to initialise log: %v", err)
 		}
+		klog.Infof("Initialised checkpoint.")
 	}
 
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {

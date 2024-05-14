@@ -138,7 +138,7 @@ func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
 // GetEntryBundle retrieves the Nth entries bundle.
 // If size is != the max size of the bundle, a partial bundle is returned.
 func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byte, error) {
-	bd, bf := layout.SeqPath("", index)
+	bd, bf := layout.SeqPath(s.path, index)
 	if size < uint64(s.params.EntryBundleSize) {
 		bf = fmt.Sprintf("%s.%d", bf, size)
 	}
@@ -202,12 +202,9 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 			if err := os.MkdirAll(bd, dirPerm); err != nil {
 				return 0, fmt.Errorf("failed to make seq directory structure: %w", err)
 			}
-			if err := createExclusive(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
-				if !errors.Is(os.ErrExist, err) {
-					return 0, err
-				}
+			if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
+				return 0, err
 			}
-			// ... and prepare the next entry bundle for any remaining entries in the batch
 			bundleIndex++
 			entriesInBundle = 0
 			bundle = &bytes.Buffer{}
@@ -221,10 +218,8 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		if err := os.MkdirAll(bd, dirPerm); err != nil {
 			return 0, fmt.Errorf("failed to make seq directory structure: %w", err)
 		}
-		if err := createExclusive(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
-			if !errors.Is(os.ErrExist, err) {
-				return 0, err
-			}
+		if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
+			return 0, err
 		}
 	}
 
@@ -250,7 +245,7 @@ func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) 
 // partial tile for the given tree size at that location.
 func (s *Storage) GetTile(_ context.Context, level, index, logSize uint64) (*api.Tile, error) {
 	tileSize := layout.PartialTileSize(level, index, logSize)
-	p := filepath.Join(layout.TilePath("", level, index, tileSize))
+	p := filepath.Join(layout.TilePath(s.path, level, index, tileSize))
 	t, err := s.ReadFile(p)
 	if err != nil {
 		var nske *types.NoSuchKey
@@ -282,7 +277,7 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 		return fmt.Errorf("failed to marshal tile: %w", err)
 	}
 
-	tDir, tFile := layout.TilePath("", level, index, tileSize%256)
+	tDir, tFile := layout.TilePath(s.path, level, index, tileSize%256)
 	tPath := filepath.Join(tDir, tFile)
 
 	if err := s.WriteFile(tPath, t); err != nil {
@@ -294,7 +289,8 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 
 // WriteCheckpoint stores a raw log checkpoint on disk.
 func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
-	if err := s.WriteFile(layout.CheckpointPath, newCPRaw); err != nil {
+	path := filepath.Join(s.path, layout.CheckpointPath)
+	if err := s.WriteFile(path, newCPRaw); err != nil {
 		klog.Infof("Couldn't write checkpoint: %v", err)
 	}
 	return nil
@@ -302,7 +298,7 @@ func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 
 // Readcheckpoint returns the latest stored checkpoint.
 func (s *Storage) ReadCheckpoint() ([]byte, error) {
-	return s.ReadFile(layout.CheckpointPath)
+	return s.ReadFile(filepath.Join(s.path, layout.CheckpointPath))
 }
 
 func (s *Storage) NewTree(size uint64, hash []byte) error {
@@ -313,37 +309,11 @@ func (s *Storage) NewTree(size uint64, hash []byte) error {
 	return s.WriteCheckpoint(cpRaw)
 }
 
-// createExclusive creates a file at the given path and name before writing the data in d to it.
-// It will error if the file already exists, or it's unable to fully write the
-// data & close the file.
-func createExclusive(f string, d []byte) error {
-	tmpFile, err := os.CreateTemp(filepath.Dir(f), "")
-	if err != nil {
-		return fmt.Errorf("unable to create temporary file: %w", err)
-	}
-	tmpName := tmpFile.Name()
-	n, err := tmpFile.Write(d)
-	if err != nil {
-		return fmt.Errorf("unable to write leafdata to temporary file: %w", err)
-	}
-	if got, want := n, len(d); got != want {
-		return fmt.Errorf("short write on leaf, wrote %d expected %d", got, want)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, f); err != nil {
-		return err
-	}
-	return nil
-}
-
 // WriteFile stores a file on S3.
 func (s *Storage) WriteFile(path string, data []byte) error {
-	fullPath := filepath.Join(s.path, path)
 	_, err := s.s3.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(fullPath),
+		Key:    aws.String(path),
 		Body:   bytes.NewReader(data),
 	})
 	if err != nil {
@@ -354,10 +324,9 @@ func (s *Storage) WriteFile(path string, data []byte) error {
 
 // ReadFile reas a file from S3.
 func (s *Storage) ReadFile(path string) ([]byte, error) {
-	fullPath := filepath.Join(s.path, path)
 	result, err := s.s3.GetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(fullPath),
+		Key:    aws.String(path),
 	})
 
 	if err != nil {

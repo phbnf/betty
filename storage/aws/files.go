@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -50,6 +50,7 @@ type Storage struct {
 
 	bucket string
 	s3     s3.Client
+	id     int64
 }
 
 // NewTreeFunc is the signature of a function which receives information about newly integrated trees.
@@ -75,6 +76,7 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 		newTree: newTree,
 		bucket:  bucketName,
 		s3:      *s3Client,
+		id:      rand.Int63(),
 	}
 	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
 
@@ -92,44 +94,107 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 	return r
 }
 
+type CPLock struct {
+	Logname string `json:"logname"`
+	ID      int64  `json:"id"`
+}
+
 // lockCP places a POSIX advisory lock for the checkpoint.
 // Note that a) this is advisory, and b) we use an adjacent file to the checkpoint
 // (`checkpoint.lock`) to avoid inherent brittleness of the `fcntrl` API (*any* `Close`
 // operation on this file (even if it's a different FD) from this PID, or overwriting
 // of the file by *any* process breaks the lock.)
 func (s *Storage) lockCP() error {
-	return nil
-	// var err error
-	// if s.cpFile != nil {
-	// 	panic("not unlocked")
-	// }
-	// s.cpFile, err = os.OpenFile(filepath.Join(s.path, layout.CheckpointPath+".lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC, filePerm)
-	// if err != nil {
-	// 	return err
-	// }
+	// Initialize a session that the SDK will use to load
+	// credentials from the shared credentials file ~/.aws/credentials
+	// and region from the shared configuration file ~/.aws/config.
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
 
-	// flockT := syscall.Flock_t{
-	// 	Type:   syscall.F_WRLCK,
-	// 	Whence: io.SeekStart,
-	// 	Start:  0,
-	// 	Len:    0,
-	// }
-	// for {
-	// 	if err := syscall.FcntlFlock(s.cpFile.Fd(), syscall.F_SETLKW, &flockT); err != syscall.EINTR {
-	// 		return err
-	// 	}
-	// }
+	// Create DynamoDB client
+	svc := dynamodb.New(sess)
+	// snippet-end:[dynamodb.go.create_item.session]
+
+	// snippet-start:[dynamodb.go.create_item.assign_struct]
+	item := CPLock{
+		Logname: "betty",
+		ID:      s.id,
+	}
+
+	av, err := dynamodbattribute.MarshalMap(item)
+	if err != nil {
+		klog.Fatalf("Got error marshalling new movie item: %s", err)
+	}
+	// snippet-end:[dynamodb.go.create_item.assign_struct]
+
+	// snippet-start:[dynamodb.go.create_item.call]
+	// Create item in table Movies
+	tableName := "bettylog"
+
+	input := &dynamodb.PutItemInput{
+		Item:                av,
+		TableName:           aws.String(tableName),
+		ConditionExpression: aws.String("attribute_not_exists (Logname)"),
+	}
+
+	_, err = svc.PutItem(input)
+	if err != nil {
+		klog.Fatalf("Got error calling PutItem: %s", err)
+	}
+
+	fmt.Println("Successfully Acquired lock for " + item.Logname + " to table " + tableName)
+	return nil
+}
+
+type CPUnlock struct {
+	Logname string `json:"logname"`
 }
 
 // unlockCP unlocks the `checkpoint.lock` file.
 func (s *Storage) unlockCP() error {
-	//if s.cpFile == nil {
-	//	panic(errors.New("not locked"))
+	// Initialize a session that the SDK will use to load
+	// credentials from the shared credentials file ~/.aws/credentials
+	// and region from the shared configuration file ~/.aws/config.
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+
+	// Create DynamoDB client
+	svc := dynamodb.New(sess)
+	// snippet-end:[dynamodb.go.create_item.session]
+
+	// snippet-start:[dynamodb.go.create_item.assign_struct]
+	item := CPUnlock{
+		Logname: "betty",
+	}
+
+	av, err := dynamodbattribute.MarshalMap(item)
+	if err != nil {
+		klog.Fatalf("Got error marshalling new movie item: %s", err)
+	}
+	// snippet-end:[dynamodb.go.create_item.assign_struct]
+
+	// snippet-start:[dynamodb.go.create_item.call]
+	// Create item in table Movies
+	tableName := "bettylog"
+
+	//input := &dynamodb.PutItemInput{
+	//	Item:                av,
+	//	TableName:           aws.String(tableName),
+	//	ConditionExpression: aws.String("attribute_not_exists"),
 	//}
-	//if err := s.cpFile.Close(); err != nil {
-	//	return err
-	//}
-	//s.cpFile = nil
+	input := &dynamodb.DeleteItemInput{
+		Key:       av,
+		TableName: aws.String(tableName),
+	}
+
+	_, err = svc.DeleteItem(input)
+	if err != nil {
+		klog.Fatalf("Got error calling DeleteItem: %s", err)
+	}
+
+	fmt.Println("Successfully Removed lock for'" + item.Logname + " in table " + tableName)
 	return nil
 }
 
@@ -299,62 +364,7 @@ func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 	if err := s.WriteFile(path, newCPRaw); err != nil {
 		klog.Infof("Couldn't write checkpoint: %v", err)
 	}
-	WriteDynamoDB()
 	return nil
-}
-
-type Item struct {
-	Year   int
-	Title  string
-	Plot   string
-	Rating float64
-}
-
-func WriteDynamoDB() error {
-	// Initialize a session that the SDK will use to load
-	// credentials from the shared credentials file ~/.aws/credentials
-	// and region from the shared configuration file ~/.aws/config.
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-
-	// Create DynamoDB client
-	svc := dynamodb.New(sess)
-	// snippet-end:[dynamodb.go.create_item.session]
-
-	// snippet-start:[dynamodb.go.create_item.assign_struct]
-	item := Item{
-		Year:   2015,
-		Title:  "The Big New Movie",
-		Plot:   "Nothing happens at all.",
-		Rating: 0.0,
-	}
-
-	av, err := dynamodbattribute.MarshalMap(item)
-	if err != nil {
-		klog.Fatalf("Got error marshalling new movie item: %s", err)
-	}
-	// snippet-end:[dynamodb.go.create_item.assign_struct]
-
-	// snippet-start:[dynamodb.go.create_item.call]
-	// Create item in table Movies
-	tableName := "bettylog"
-
-	input := &dynamodb.PutItemInput{
-		Item:      av,
-		TableName: aws.String(tableName),
-	}
-
-	_, err = svc.PutItem(input)
-	if err != nil {
-		klog.Fatalf("Got error calling PutItem: %s", err)
-	}
-
-	year := strconv.Itoa(item.Year)
-
-	fmt.Println("Successfully added '" + item.Title + "' (" + year + ") to table " + tableName)
-	return nil
-
 }
 
 // Readcheckpoint returns the latest stored checkpoint.

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -18,6 +19,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/transparency-dev/merkle/rfc6962"
 	"github.com/transparency-dev/serverless-log/api"
 	"github.com/transparency-dev/serverless-log/api/layout"
@@ -295,7 +299,62 @@ func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 	if err := s.WriteFile(path, newCPRaw); err != nil {
 		klog.Infof("Couldn't write checkpoint: %v", err)
 	}
+	WriteDynamoDB()
 	return nil
+}
+
+type Item struct {
+	Year   int
+	Title  string
+	Plot   string
+	Rating float64
+}
+
+func WriteDynamoDB() error {
+	// Initialize a session that the SDK will use to load
+	// credentials from the shared credentials file ~/.aws/credentials
+	// and region from the shared configuration file ~/.aws/config.
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+
+	// Create DynamoDB client
+	svc := dynamodb.New(sess)
+	// snippet-end:[dynamodb.go.create_item.session]
+
+	// snippet-start:[dynamodb.go.create_item.assign_struct]
+	item := Item{
+		Year:   2015,
+		Title:  "The Big New Movie",
+		Plot:   "Nothing happens at all.",
+		Rating: 0.0,
+	}
+
+	av, err := dynamodbattribute.MarshalMap(item)
+	if err != nil {
+		klog.Fatalf("Got error marshalling new movie item: %s", err)
+	}
+	// snippet-end:[dynamodb.go.create_item.assign_struct]
+
+	// snippet-start:[dynamodb.go.create_item.call]
+	// Create item in table Movies
+	tableName := "bettylog"
+
+	input := &dynamodb.PutItemInput{
+		Item:      av,
+		TableName: aws.String(tableName),
+	}
+
+	_, err = svc.PutItem(input)
+	if err != nil {
+		klog.Fatalf("Got error calling PutItem: %s", err)
+	}
+
+	year := strconv.Itoa(item.Year)
+
+	fmt.Println("Successfully added '" + item.Title + "' (" + year + ") to table " + tableName)
+	return nil
+
 }
 
 // Readcheckpoint returns the latest stored checkpoint.

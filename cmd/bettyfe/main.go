@@ -113,6 +113,16 @@ func main() {
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
 	})
 
+	http.HandleFunc("GET /checkpoint", func(w http.ResponseWriter, r *http.Request) {
+		cp, err := s.ReadCheckpoint()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(fmt.Sprintf("Failed to read checkpoint: %v", err)))
+			return
+		}
+		w.Write(cp)
+	})
+
 	go printStats(ctx, s, ct, l)
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
 		klog.Exitf("ListenAndServe: %v", err)

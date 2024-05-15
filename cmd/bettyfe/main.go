@@ -123,6 +123,26 @@ func main() {
 		w.Write(cp)
 	})
 
+	http.HandleFunc("GET /tile/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		tile, err := s.ReadFile(r.URL.Path)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(fmt.Sprintf("Failed to read file: %v", err)))
+			return
+		}
+		w.Write(tile)
+	})
+
+	http.HandleFunc("GET /seq/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		tile, err := s.ReadFile(r.URL.Path)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(fmt.Sprintf("Failed to read file: %v", err)))
+			return
+		}
+		w.Write(tile)
+	})
+
 	go printStats(ctx, s, ct, l)
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
 		klog.Exitf("ListenAndServe: %v", err)

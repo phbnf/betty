@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"github.com/aws/aws-sdk-go/service/dynamodb/expression"
 	"github.com/transparency-dev/merkle/rfc6962"
 	"github.com/transparency-dev/serverless-log/api"
 	"github.com/transparency-dev/serverless-log/api/layout"
@@ -132,10 +133,18 @@ func (s *Storage) lockCP() error {
 	// Create item in table Movies
 	tableName := "bettylog"
 
+	cond := expression.AttributeNotExists(expression.Name("Logname")) //.And(expression.Value("Id").Equal(expression.Value(s.id)))
+	expr, err := expression.NewBuilder().WithCondition(cond).Build()
+	if err != nil {
+		klog.Fatalf("Cannot create dynamodb condition: %v", err)
+	}
+
 	input := &dynamodb.PutItemInput{
-		Item:                av,
-		TableName:           aws.String(tableName),
-		ConditionExpression: aws.String("attribute_not_exists (Logname)"),
+		Item:                      av,
+		TableName:                 aws.String(tableName),
+		ConditionExpression:       expr.Condition(),
+		ExpressionAttributeValues: expr.Values(),
+		ExpressionAttributeNames:  expr.Names(),
 	}
 
 	_, err = svc.PutItem(input)

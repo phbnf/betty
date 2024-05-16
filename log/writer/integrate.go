@@ -157,7 +157,6 @@ func (tc tileCache) Visit(id compact.NodeID, hash []byte) {
 		tile, err = tc.getTile(tileLevel, tileIndex)
 		if err != nil {
 			var nske *types.NoSuchKey
-			fmt.Println(errors.As(err, &nske))
 			if !errors.As(err, &nske) {
 				panic(err)
 			}

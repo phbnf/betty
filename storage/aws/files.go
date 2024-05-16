@@ -313,7 +313,6 @@ func (s *Storage) GetTile(_ context.Context, level, index, logSize uint64) (*api
 	t, err := s.ReadFile(p)
 	if err != nil {
 		var nske *types.NoSuchKey
-		fmt.Println(errors.As(err, &nske))
 		if !errors.As(err, &nske) {
 			return nil, fmt.Errorf("failed to read tile at %q: %w", p, err)
 		}

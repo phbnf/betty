@@ -188,14 +188,16 @@ func (s *Storage) unlockCP() error {
 	// Create item in table Movies
 	tableName := "bettylog"
 
-	//input := &dynamodb.PutItemInput{
-	//	Item:                av,
-	//	TableName:           aws.String(tableName),
-	//	ConditionExpression: aws.String("attribute_not_exists"),
-	//}
+	keyCond := expression.Key("id").Equal(expression.Value(s.id))
+	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
+	if err != nil {
+		klog.Fatalf("Cannot create dynamodb condition: %v", err)
+	}
+
 	input := &dynamodb.DeleteItemInput{
-		Key:       av,
-		TableName: aws.String(tableName),
+		Key:                 av,
+		TableName:           aws.String(tableName),
+		ConditionExpression: expr.Condition(),
 	}
 
 	_, err = svc.DeleteItem(input)

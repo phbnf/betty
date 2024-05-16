@@ -143,7 +143,7 @@ func (s *Storage) lockCP() error {
 		klog.Fatalf("Got error calling PutItem: %s", err)
 	}
 
-	fmt.Println("Successfully Acquired lock for " + item.Logname + " to table " + tableName)
+	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, tableName)
 	return nil
 }
 
@@ -194,7 +194,7 @@ func (s *Storage) unlockCP() error {
 		klog.Fatalf("Got error calling DeleteItem: %s", err)
 	}
 
-	fmt.Println("Successfully Removed lock for'" + item.Logname + " in table " + tableName)
+	klog.V(2).Infof("Successfully Removed lock for %s to table %s", item.Logname, tableName)
 	return nil
 }
 

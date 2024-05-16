@@ -394,7 +394,7 @@ func (s *Storage) ReadFile(path string) ([]byte, error) {
 	})
 
 	if err != nil {
-		klog.Infof("Couldn't get object %v:%v. Here's why: %v\n", s.bucket, path, err)
+		klog.V(2).Infof("Couldn't get object %v:%v. Here's why: %v\n", s.bucket, path, err)
 		return nil, err
 	}
 	defer result.Body.Close()

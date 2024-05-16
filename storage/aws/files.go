@@ -118,7 +118,7 @@ func (s *Storage) lockCP() error {
 
 	// snippet-start:[dynamodb.go.create_item.assign_struct]
 	item := CPLock{
-		Logname: "betty",
+		Logname: s.path,
 		ID:      s.id,
 	}
 
@@ -166,7 +166,7 @@ func (s *Storage) unlockCP() error {
 
 	// snippet-start:[dynamodb.go.create_item.assign_struct]
 	item := CPUnlock{
-		Logname: "betty",
+		Logname: s.path,
 	}
 
 	av, err := dynamodbattribute.MarshalMap(item)

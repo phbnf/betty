@@ -17,13 +17,12 @@ import (
 	"github.com/AlCutter/betty/log/writer"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-	"github.com/aws/aws-sdk-go/service/dynamodb/expression"
-	dbtypes "github.com/aws/aws-sdk-go/service/dynamodb/types"
 	"github.com/transparency-dev/merkle/rfc6962"
 	"github.com/transparency-dev/serverless-log/api"
 	"github.com/transparency-dev/serverless-log/api/layout"
@@ -102,7 +101,7 @@ type CPLock struct {
 }
 
 func (lock CPLock) GetKey() map[string]dbtypes.AttributeValue {
-	logname, err := dynamodbattribute.Marshal(lock.Logname)
+	logname, err := attributevalue.Marshal(lock.Logname)
 	if err != nil {
 		panic(err)
 	}
@@ -115,15 +114,13 @@ func (lock CPLock) GetKey() map[string]dbtypes.AttributeValue {
 // operation on this file (even if it's a different FD) from this PID, or overwriting
 // of the file by *any* process breaks the lock.)
 func (s *Storage) lockCP() error {
-	// Initialize a session that the SDK will use to load
-	// credentials from the shared credentials file ~/.aws/credentials
-	// and region from the shared configuration file ~/.aws/config.
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-
 	// Create DynamoDB client
-	svc := dynamodb.New(sess)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		klog.Fatalf("Cannot load config: %v", err)
+	}
+
+	svc := dynamodb.NewFromConfig(cfg)
 	// snippet-end:[dynamodb.go.create_item.session]
 
 	// snippet-start:[dynamodb.go.create_item.assign_struct]
@@ -132,7 +129,7 @@ func (s *Storage) lockCP() error {
 		ID:      s.id,
 	}
 
-	av, err := dynamodbattribute.MarshalMap(item)
+	av, err := attributevalue.MarshalMap(item)
 	if err != nil {
 		klog.Fatalf("Got error marshalling new movie item: %s", err)
 	}
@@ -156,7 +153,8 @@ func (s *Storage) lockCP() error {
 		ExpressionAttributeNames:  expr.Names(),
 	}
 
-	output, err := svc.PutItem(input)
+	// TODO(phboneff): fix context
+	output, err := svc.PutItem(context.TODO(), input)
 	if err != nil {
 		klog.Fatalf("Got error calling PutItem: %s", err)
 	}

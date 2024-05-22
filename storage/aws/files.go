@@ -166,47 +166,47 @@ func (s *Storage) unlockCP() error {
 	// Initialize a session that the SDK will use to load
 	// credentials from the shared credentials file ~/.aws/credentials
 	// and region from the shared configuration file ~/.aws/config.
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
+	//sess := session.Must(session.NewSessionWithOptions(session.Options{
+	//	SharedConfigState: session.SharedConfigEnable,
+	//}))
 
-	// Create DynamoDB client
-	svc := dynamodb.New(sess)
-	// snippet-end:[dynamodb.go.create_item.session]
+	//// Create DynamoDB client
+	//svc := dynamodb.New(sess)
+	//// snippet-end:[dynamodb.go.create_item.session]
 
-	// snippet-start:[dynamodb.go.create_item.assign_struct]
-	item := CPUnlock{
-		Logname: s.path,
-	}
+	//// snippet-start:[dynamodb.go.create_item.assign_struct]
+	//item := CPUnlock{
+	//	Logname: s.path,
+	//}
 
-	av, err := dynamodbattribute.MarshalMap(item)
-	if err != nil {
-		klog.Fatalf("Got error marshalling new movie item: %s", err)
-	}
-	// snippet-end:[dynamodb.go.create_item.assign_struct]
+	//av, err := dynamodbattribute.MarshalMap(item)
+	//if err != nil {
+	//	klog.Fatalf("Got error marshalling new movie item: %s", err)
+	//}
+	//// snippet-end:[dynamodb.go.create_item.assign_struct]
 
-	// snippet-start:[dynamodb.go.create_item.call]
-	// Create item in table Movies
-	tableName := "bettylog"
+	//// snippet-start:[dynamodb.go.create_item.call]
+	//// Create item in table Movies
+	//tableName := "bettylog"
 
-	keyCond := expression.Key("id").Equal(expression.Value(s.id))
-	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
-	if err != nil {
-		klog.Fatalf("Cannot create dynamodb condition: %v", err)
-	}
+	//keyCond := expression.Key("id").Equal(expression.Value(s.id))
+	//expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
+	//if err != nil {
+	//	klog.Fatalf("Cannot create dynamodb condition: %v", err)
+	//}
 
-	input := &dynamodb.DeleteItemInput{
-		Key:                 av,
-		TableName:           aws.String(tableName),
-		ConditionExpression: expr.Condition(),
-	}
+	//input := &dynamodb.DeleteItemInput{
+	//	Key:                 av,
+	//	TableName:           aws.String(tableName),
+	//	ConditionExpression: expr.Condition(),
+	//}
 
-	_, err = svc.DeleteItem(input)
-	if err != nil {
-		klog.Fatalf("Got error calling DeleteItem: %s", err)
-	}
+	//_, err = svc.DeleteItem(input)
+	//if err != nil {
+	//	klog.Fatalf("Got error calling DeleteItem: %s", err)
+	//}
 
-	klog.V(2).Infof("Successfully Removed lock for %s to table %s", item.Logname, tableName)
+	//klog.V(2).Infof("Successfully Removed lock for %s to table %s", item.Logname, tableName)
 	return nil
 }
 

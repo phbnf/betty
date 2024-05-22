@@ -20,7 +20,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	dbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/transparency-dev/merkle/rfc6962"
@@ -98,14 +97,6 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 type CPLock struct {
 	Logname string `json:"logname"`
 	ID      int64  `json:"id"`
-}
-
-func (lock CPLock) GetKey() map[string]dbtypes.AttributeValue {
-	logname, err := attributevalue.Marshal(lock.Logname)
-	if err != nil {
-		panic(err)
-	}
-	return map[string]dbtypes.AttributeValue{"logname": logname}
 }
 
 // lockCP places a POSIX advisory lock for the checkpoint.

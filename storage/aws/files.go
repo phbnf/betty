@@ -147,10 +147,11 @@ func (s *Storage) lockCP() error {
 		ExpressionAttributeNames:  expr.Names(),
 	}
 
-	_, err = svc.PutItem(input)
+	output, err := svc.PutItem(input)
 	if err != nil {
 		klog.Fatalf("Got error calling PutItem: %s", err)
 	}
+	klog.V(2).Infof("PutItem output: %+v", output)
 
 	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, tableName)
 	return nil
@@ -243,6 +244,12 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		if err := s.unlockCP(); err != nil {
 			panic(err)
 		}
+		currCP, err := s.ReadCheckpoint()
+		if err != nil {
+			klog.Fatalf("Couldn't load checkpoint:  %v", err)
+		}
+		size, _, _ := s.curTree(currCP)
+		klog.V(2).Infof("I am removing the lock, from checkpoint size: %d\n", size)
 		s.Unlock()
 	}()
 
@@ -251,6 +258,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		klog.Fatalf("Couldn't load checkpoint:  %v", err)
 	}
 	size, _, err := s.curTree(currCP)
+	klog.V(2).Infof("I have the lock, from checkpoint size: %d\n", size)
 
 	if err != nil {
 		return 0, err
@@ -365,6 +373,8 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 // WriteCheckpoint stores a raw log checkpoint on disk.
 func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 	path := filepath.Join(s.path, layout.CheckpointPath)
+	size, _, _ := s.curTree(newCPRaw)
+	klog.V(2).Infof("Writting checkpoint of size %d\n", size)
 	if err := s.WriteFile(path, newCPRaw); err != nil {
 		klog.Infof("Couldn't write checkpoint: %v", err)
 	}

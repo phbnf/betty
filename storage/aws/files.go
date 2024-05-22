@@ -152,8 +152,9 @@ func (s *Storage) lockCP() error {
 		if errors.As(err, &cdte) {
 			// TODO(phboneff): better retry
 			s.lockCP()
+		} else {
+			klog.Fatalf("Got error calling PutItem: %s", err)
 		}
-		klog.Fatalf("Got error calling PutItem: %s", err)
 	}
 	klog.V(2).Infof("PutItem output: %+v", output)
 

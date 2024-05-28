@@ -352,7 +352,7 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 	return nil
 }
 
-// WriteCheckpoint stores a raw log checkpoint on disk.
+// WriteCheckpoint stores a raw log checkpoint.
 func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 	path := filepath.Join(s.path, layout.CheckpointPath)
 	size, _, _ := s.curTree(newCPRaw)

@@ -53,6 +53,7 @@ type Storage struct {
 	bucket string
 	s3     s3.Client
 	id     int64
+	ddb    dynamodb.Client
 }
 
 // NewTreeFunc is the signature of a function which receives information about newly integrated trees.
@@ -69,6 +70,8 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 		return nil
 	}
 	s3Client := s3.NewFromConfig(sdkConfig)
+	ddbClient := dynamodb.NewFromConfig(sdkConfig)
+
 	r := &Storage{
 		path:    path,
 		params:  params,
@@ -77,7 +80,9 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 		bucket:  bucketName,
 		s3:      *s3Client,
 		id:      rand.Int63(),
+		ddb:     *ddbClient,
 	}
+
 	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
 
 	currCP, err := r.ReadCheckpoint()
@@ -104,13 +109,6 @@ type CPLock struct {
 // by the instance that put it.
 // If it cannot put a lock, retries indefinitely.
 func (s *Storage) lockCP() error {
-	// Create DynamoDB client
-	cfg, err := config.LoadDefaultConfig(context.TODO())
-	if err != nil {
-		klog.Fatalf("Cannot load config: %v", err)
-	}
-
-	svc := dynamodb.NewFromConfig(cfg)
 
 	item := CPLock{
 		Logname: s.path,
@@ -137,7 +135,7 @@ func (s *Storage) lockCP() error {
 	}
 
 	// TODO(phboneff): fix context
-	output, err := svc.PutItem(context.TODO(), input)
+	output, err := s.ddb.PutItem(context.TODO(), input)
 	if err != nil {
 		var cdte *dynamodbtypes.ConditionalCheckFailedException
 		if errors.As(err, &cdte) {
@@ -159,13 +157,6 @@ type CPUnlock struct {
 
 // unlockCP unlocks the Checkpoint in DynamoDB for the storage's ID.
 func (s *Storage) unlockCP() error {
-	cfg, err := config.LoadDefaultConfig(context.TODO())
-	if err != nil {
-		klog.Fatalf("Cannot load config: %v", err)
-	}
-
-	svc := dynamodb.NewFromConfig(cfg)
-
 	item := CPUnlock{
 		Logname: s.path,
 	}
@@ -187,7 +178,7 @@ func (s *Storage) unlockCP() error {
 		ConditionExpression: expr.Condition(),
 	}
 
-	_, err = svc.DeleteItem(context.TODO(), input)
+	_, err = s.ddb.DeleteItem(context.TODO(), input)
 	if err != nil {
 		klog.Fatalf("Got error calling DeleteItem: %s", err)
 	}

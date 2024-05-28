@@ -93,10 +93,10 @@ type CPLock struct {
 }
 
 // lockCP places a POSIX advisory lock for the checkpoint.
-// Note that a) this is advisory, and b) we use an adjacent file to the checkpoint
-// (`checkpoint.lock`) to avoid inherent brittleness of the `fcntrl` API (*any* `Close`
-// operation on this file (even if it's a different FD) from this PID, or overwriting
-// of the file by *any* process breaks the lock.)
+// lockCP places a lock in DyamoDB for the checkpoint.
+// It puts a ID alongside this lock, which can only be removed
+// by the instance that put it.
+// If it cannot put a lock, retries indefinitely.
 func (s *Storage) lockCP() error {
 	// Create DynamoDB client
 	cfg, err := config.LoadDefaultConfig(context.TODO())
@@ -158,7 +158,7 @@ type CPUnlock struct {
 	Logname string `json:"logname"`
 }
 
-// unlockCP unlocks the `checkpoint.lock` file.
+// unlockCP unlocks the Checkpoint in DynamoDB for the storage's ID.
 func (s *Storage) unlockCP() error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {

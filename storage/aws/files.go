@@ -28,6 +28,10 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const (
+	lockTable = "bettylog"
+)
+
 // Storage implements storage functions for a POSIX filesystem.
 // It leverages the POSIX atomic operations.
 type Storage struct {
@@ -116,8 +120,6 @@ func (s *Storage) lockCP() error {
 		klog.Fatalf("Got error marshalling new movie item: %s", err)
 	}
 
-	tableName := "bettylog"
-
 	cond := expression.AttributeNotExists(expression.Name("Logname"))
 	expr, err := expression.NewBuilder().WithCondition(cond).Build()
 	if err != nil {
@@ -126,7 +128,7 @@ func (s *Storage) lockCP() error {
 
 	input := &dynamodb.PutItemInput{
 		Item:                      av,
-		TableName:                 aws.String(tableName),
+		TableName:                 aws.String(lockTable),
 		ConditionExpression:       expr.Condition(),
 		ExpressionAttributeValues: expr.Values(),
 		ExpressionAttributeNames:  expr.Names(),
@@ -145,7 +147,7 @@ func (s *Storage) lockCP() error {
 	}
 	klog.V(2).Infof("PutItem output: %+v", output)
 
-	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, tableName)
+	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, lockTable)
 	return nil
 }
 
@@ -171,8 +173,6 @@ func (s *Storage) unlockCP() error {
 		klog.Fatalf("Got error marshalling new movie item: %s", err)
 	}
 
-	tableName := "bettylog"
-
 	keyCond := expression.Key("id").Equal(expression.Value(s.id))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
 	if err != nil {
@@ -181,7 +181,7 @@ func (s *Storage) unlockCP() error {
 
 	input := &dynamodb.DeleteItemInput{
 		Key:                 av,
-		TableName:           aws.String(tableName),
+		TableName:           aws.String(lockTable),
 		ConditionExpression: expr.Condition(),
 	}
 
@@ -190,7 +190,7 @@ func (s *Storage) unlockCP() error {
 		klog.Fatalf("Got error calling DeleteItem: %s", err)
 	}
 
-	klog.V(2).Infof("Successfully Removed lock for %s to table %s", item.Logname, tableName)
+	klog.V(2).Infof("Successfully Removed lock for %s to table %s", item.Logname, lockTable)
 	return nil
 }
 
@@ -308,8 +308,6 @@ func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) 
 }
 
 // GetTile returns the tile at the given tile-level and tile-index.
-// If no complete tile exists at that location, it will attempt to find a
-// partial tile for the given tree size at that location.
 func (s *Storage) GetTile(_ context.Context, level, index, logSize uint64) (*api.Tile, error) {
 	tileSize := layout.PartialTileSize(level, index, logSize)
 	p := filepath.Join(layout.TilePath(s.path, level, index, tileSize))
@@ -329,7 +327,7 @@ func (s *Storage) GetTile(_ context.Context, level, index, logSize uint64) (*api
 	return &tile, nil
 }
 
-// StoreTile writes a tile out to disk.
+// StoreTile writes a tile out to S3.
 // Fully populated tiles are stored at the path corresponding to the level &
 // index parameters, partially populated (i.e. right-hand edge) tiles are
 // stored with a .xx suffix where xx is the number of "tile leaves" in hex.

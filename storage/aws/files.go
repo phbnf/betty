@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -29,11 +28,6 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const (
-	dirPerm  = 0o755
-	filePerm = 0o644
-)
-
 // Storage implements storage functions for a POSIX filesystem.
 // It leverages the POSIX atomic operations.
 type Storage struct {
@@ -41,8 +35,6 @@ type Storage struct {
 	params log.Params
 	path   string
 	pool   *writer.Pool
-
-	cpFile *os.File
 
 	curTree CurrentTreeFunc
 	newTree NewTreeFunc

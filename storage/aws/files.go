@@ -1,3 +1,9 @@
+// package aws provides an interface to store log on top of S3.
+// It uses DynamoDB for sequencing.
+// To use this, populate:
+//  - ~/.aws/config with a region
+//  - ~/.aws/credential
+
 package aws
 
 import (
@@ -32,8 +38,7 @@ const (
 	lockTable = "bettylog"
 )
 
-// Storage implements storage functions for a POSIX filesystem.
-// It leverages the POSIX atomic operations.
+// Storage implements storage functions on top of S3.
 type Storage struct {
 	sync.Mutex
 	params log.Params
@@ -56,7 +61,7 @@ type NewTreeFunc func(size uint64, root []byte) ([]byte, error)
 // CurrentTree is the signature of a function which retrieves the current integrated tree size and root hash.
 type CurrentTreeFunc func([]byte) (uint64, []byte, error)
 
-// New creates a new POSIX storage.
+// New creates a new S3 storage.
 func New(path string, params log.Params, batchMaxAge time.Duration, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string) *Storage {
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -94,7 +99,6 @@ type CPLock struct {
 	ID      int64  `json:"id"`
 }
 
-// lockCP places a POSIX advisory lock for the checkpoint.
 // lockCP places a lock in DyamoDB for the checkpoint.
 // It puts a ID alongside this lock, which can only be removed
 // by the instance that put it.
@@ -217,7 +221,7 @@ func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byt
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
 	// Double locking:
 	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
-	// - The POSIX `LockCP()` ensures that distinct tasks are serialised.
+	// - The Dynamodb `LockCP()` ensures that distinct tasks are serialised.
 	s.Lock()
 	if err := s.lockCP(); err != nil {
 		panic(err)

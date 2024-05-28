@@ -35,7 +35,8 @@ import (
 )
 
 const (
-	lockTable = "bettylog"
+	lockTable    = "bettylog"
+	entriesTable = "bettyentries"
 )
 
 // Storage implements storage functions on top of S3.
@@ -210,6 +211,61 @@ func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byt
 // We try to minimise the number of partially complete entry bundles by writing entries in chunks rather
 // than one-by-one.
 func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Batch) (uint64, error) {
+	seq, err := s.sequenceBatch(ctx, batch)
+	if err != nil {
+		return 0, fmt.Errorf("s.sequenceBatch(): %v", err)
+	}
+
+	_, _, err = s.getStagedEntries(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("getStagedEntries: %v", err)
+	}
+
+	// TODO(phboneff): careful, need to make sure that two nodes don't override the same bundle. This is prob
+	// done by reading the bundle form the table at all times, and not from this function
+	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
+	bundle := &bytes.Buffer{}
+	if entriesInBundle > 0 {
+		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
+		part, err := s.GetEntryBundle(ctx, bundleIndex, entriesInBundle)
+		if err != nil {
+			return 0, err
+		}
+		bundle.Write(part)
+	}
+	// Add new entries to the bundle
+	// TODO(phboneff): read the entries from the batch table rather
+	for _, e := range batch.Entries {
+		bundle.WriteString(base64.StdEncoding.EncodeToString(e))
+		bundle.WriteString("\n")
+		entriesInBundle++
+		if entriesInBundle == uint64(s.params.EntryBundleSize) {
+			//  This bundle is full, so we need to write it out...
+			bd, bf := layout.SeqPath(s.path, bundleIndex)
+			if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
+				return 0, err
+			}
+			// ... and prepare the next entry bundle for any remaining entries in the batch
+			bundleIndex++
+			entriesInBundle = 0
+			bundle = &bytes.Buffer{}
+		}
+	}
+	// If we have a partial bundle remaining once we've added all the entries from the batch,
+	// this needs writing out too.
+	if entriesInBundle > 0 {
+		bd, bf := layout.SeqPath(s.path, bundleIndex)
+		bf = fmt.Sprintf("%s.%d", bf, entriesInBundle)
+		if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
+			return 0, err
+		}
+	}
+
+	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
+	return seq, s.doIntegrate(ctx, seq, batch.Entries)
+}
+
+func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
 	// Double locking:
 	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
 	// - The Dynamodb `LockCP()` ensures that distinct tasks are serialised.
@@ -250,59 +306,22 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 	if err := s.stageEntries(ctx, batch.Entries, seq); err != nil {
 		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
 	}
-
-	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
-	bundle := &bytes.Buffer{}
-	if entriesInBundle > 0 {
-		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
-		part, err := s.GetEntryBundle(ctx, bundleIndex, entriesInBundle)
-		if err != nil {
-			return 0, err
-		}
-		bundle.Write(part)
-	}
-	// Add new entries to the bundle
-	for _, e := range batch.Entries {
-		bundle.WriteString(base64.StdEncoding.EncodeToString(e))
-		bundle.WriteString("\n")
-		entriesInBundle++
-		if entriesInBundle == uint64(s.params.EntryBundleSize) {
-			//  This bundle is full, so we need to write it out...
-			bd, bf := layout.SeqPath(s.path, bundleIndex)
-			if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
-				return 0, err
-			}
-			// ... and prepare the next entry bundle for any remaining entries in the batch
-			bundleIndex++
-			entriesInBundle = 0
-			bundle = &bytes.Buffer{}
-		}
-	}
-	// If we have a partial bundle remaining once we've added all the entries from the batch,
-	// this needs writing out too.
-	if entriesInBundle > 0 {
-		bd, bf := layout.SeqPath(s.path, bundleIndex)
-		bf = fmt.Sprintf("%s.%d", bf, entriesInBundle)
-		if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
-			return 0, err
-		}
-	}
-
-	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
-	return seq, s.doIntegrate(ctx, seq, batch.Entries)
+	return seq, nil
 }
 
 type Entry struct {
-	idx   uint64
-	value []byte
+	Logname string
+	Idx     uint64
+	Value   []byte
 }
 
 func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize uint64) error {
 	for i, e := range entries {
 		// TODO(phboneff): see if I can bundle everything in on transation
 		item := Entry{
-			idx:   startSize + uint64(i),
-			value: e,
+			Logname: s.path,
+			Idx:     startSize + uint64(i),
+			Value:   e,
 		}
 
 		av, err := attributevalue.MarshalMap(item)
@@ -312,7 +331,7 @@ func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize 
 
 		input := &dynamodb.PutItemInput{
 			Item:      av,
-			TableName: aws.String(lockTable),
+			TableName: aws.String(entriesTable),
 		}
 
 		// TODO(phboneff): fix context
@@ -323,6 +342,31 @@ func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize 
 	}
 
 	return nil
+}
+
+func (s *Storage) getStagedEntries(ctx context.Context) ([][]byte, uint64, error) {
+	keyCond := expression.Key("Logname").Equal(expression.Value(s.path))
+	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
+	if err != nil {
+		klog.Fatalf("Cannot create dynamodb condition: %v", err)
+	}
+
+	input := &dynamodb.QueryInput{
+		KeyConditionExpression:    expr.KeyCondition(),
+		ExpressionAttributeValues: expr.Values(),
+		ExpressionAttributeNames:  expr.Names(),
+		TableName:                 aws.String(entriesTable),
+	}
+
+	output, err := s.ddb.Query(ctx, input)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
+	}
+
+	fmt.Println(output.Items)
+	// return the actual start index!
+	return nil, 0, nil
+
 }
 
 // doIntegrate handles integrating new entries into the log, and updating the checkpoint.

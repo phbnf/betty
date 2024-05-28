@@ -83,7 +83,7 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 		ddb:     *ddbClient,
 	}
 
-	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
+	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatchAndIntegrate)
 
 	currCP, err := r.ReadCheckpoint()
 	if err != nil {
@@ -203,13 +203,13 @@ func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byt
 	return s.ReadFile(filepath.Join(bd, bf))
 }
 
-// sequenceBatch writes the entries from the provided batch into the entry bundle files of the log.
+// sequenceBatchAndIntegrate writes the entries from the provided batch into the entry bundle files of the log.
 //
 // This func starts filling entries bundles at the next available slot in the log, ensuring that the
 // sequenced entries are contiguous from the zeroth entry (i.e left-hand dense).
 // We try to minimise the number of partially complete entry bundles by writing entries in chunks rather
 // than one-by-one.
-func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
+func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Batch) (uint64, error) {
 	// Double locking:
 	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
 	// - The Dynamodb `LockCP()` ensures that distinct tasks are serialised.
@@ -246,6 +246,11 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		return 0, nil
 	}
 	seq := s.curSize
+
+	if err := s.stageEntries(ctx, batch.Entries, seq); err != nil {
+		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
+	}
+
 	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
 	bundle := &bytes.Buffer{}
 	if entriesInBundle > 0 {
@@ -285,6 +290,39 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 
 	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
 	return seq, s.doIntegrate(ctx, seq, batch.Entries)
+}
+
+type Entry struct {
+	idx   uint64
+	value []byte
+}
+
+func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize uint64) error {
+	for i, e := range entries {
+		// TODO(phboneff): see if I can bundle everything in on transation
+		item := Entry{
+			idx:   startSize + uint64(i),
+			value: e,
+		}
+
+		av, err := attributevalue.MarshalMap(item)
+		if err != nil {
+			klog.Fatalf("Got error marshalling new movie item: %s", err)
+		}
+
+		input := &dynamodb.PutItemInput{
+			Item:      av,
+			TableName: aws.String(lockTable),
+		}
+
+		// TODO(phboneff): fix context
+		_, err = s.ddb.PutItem(context.TODO(), input)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // doIntegrate handles integrating new entries into the log, and updating the checkpoint.
@@ -363,6 +401,7 @@ func (s *Storage) ReadExportCheckpoint() ([]byte, error) {
 
 // WriteCheckpoint stores a raw log checkpoint.
 func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
+	// TODO(phboneff): make this write to DynamoDB instead
 	path := filepath.Join(s.path, layout.CheckpointPath)
 	size, _, _ := s.curTree(newCPRaw)
 	klog.V(2).Infof("Writting checkpoint of size %d\n", size)
@@ -374,6 +413,7 @@ func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 
 // Readcheckpoint returns the latest stored checkpoint.
 func (s *Storage) ReadCheckpoint() ([]byte, error) {
+	// TODO(phboneff): make this read from DynamoDB instead
 	return s.ReadFile(filepath.Join(s.path, layout.CheckpointPath))
 }
 

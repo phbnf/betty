@@ -105,9 +105,7 @@ func (s *Storage) lockCP() error {
 	}
 
 	svc := dynamodb.NewFromConfig(cfg)
-	// snippet-end:[dynamodb.go.create_item.session]
 
-	// snippet-start:[dynamodb.go.create_item.assign_struct]
 	item := CPLock{
 		Logname: s.path,
 		ID:      s.id,
@@ -117,13 +115,10 @@ func (s *Storage) lockCP() error {
 	if err != nil {
 		klog.Fatalf("Got error marshalling new movie item: %s", err)
 	}
-	// snippet-end:[dynamodb.go.create_item.assign_struct]
 
-	// snippet-start:[dynamodb.go.create_item.call]
-	// Create item in table Movies
 	tableName := "bettylog"
 
-	cond := expression.AttributeNotExists(expression.Name("Logname")) //.And(expression.Value("Id").Equal(expression.Value(s.id)))
+	cond := expression.AttributeNotExists(expression.Name("Logname"))
 	expr, err := expression.NewBuilder().WithCondition(cond).Build()
 	if err != nil {
 		klog.Fatalf("Cannot create dynamodb condition: %v", err)
@@ -167,7 +162,6 @@ func (s *Storage) unlockCP() error {
 
 	svc := dynamodb.NewFromConfig(cfg)
 
-	// snippet-start:[dynamodb.go.create_item.assign_struct]
 	item := CPUnlock{
 		Logname: s.path,
 	}
@@ -176,10 +170,7 @@ func (s *Storage) unlockCP() error {
 	if err != nil {
 		klog.Fatalf("Got error marshalling new movie item: %s", err)
 	}
-	// snippet-end:[dynamodb.go.create_item.assign_struct]
 
-	// snippet-start:[dynamodb.go.create_item.call]
-	// Create item in table Movies
 	tableName := "bettylog"
 
 	keyCond := expression.Key("id").Equal(expression.Value(s.id))

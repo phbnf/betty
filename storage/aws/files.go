@@ -346,6 +346,22 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 }
 
 // WriteCheckpoint stores a raw log checkpoint.
+func (s *Storage) ExportCheckpoint(newCPRaw []byte) error {
+	path := filepath.Join(s.path, layout.CheckpointPath)
+	size, _, _ := s.curTree(newCPRaw)
+	klog.V(2).Infof("Writting checkpoint of size %d\n", size)
+	if err := s.WriteFile(path, newCPRaw); err != nil {
+		klog.Infof("Couldn't write checkpoint: %v", err)
+	}
+	return nil
+}
+
+// Readcheckpoint returns the latest stored checkpoint.
+func (s *Storage) ReadExportCheckpoint() ([]byte, error) {
+	return s.ReadFile(filepath.Join(s.path, layout.CheckpointPath))
+}
+
+// WriteCheckpoint stores a raw log checkpoint.
 func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 	path := filepath.Join(s.path, layout.CheckpointPath)
 	size, _, _ := s.curTree(newCPRaw)

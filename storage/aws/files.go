@@ -112,7 +112,6 @@ type Lock struct {
 // by the instance that put it.
 // If it cannot put a lockAWS, retries indefinitely.
 func (s *Storage) lockAWS(table string) error {
-
 	item := Lock{
 		Logname: s.path,
 		ID:      s.id,
@@ -150,7 +149,7 @@ func (s *Storage) lockAWS(table string) error {
 	}
 	klog.V(2).Infof("PutItem output: %+v", output)
 
-	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, lockS3Table)
+	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, table)
 	return nil
 }
 
@@ -186,7 +185,7 @@ func (s *Storage) unlockAWS(table string) error {
 		klog.Fatalf("Got error calling DeleteItem: %s", err)
 	}
 
-	klog.V(2).Infof("Successfully Removed lock for %s to table %s", item.Logname, lockS3Table)
+	klog.V(2).Infof("Successfully Removed lock for %s to table %s", item.Logname, table)
 	return nil
 }
 

@@ -442,6 +442,7 @@ func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64)
 			return err
 		}
 	}
+	klog.V(2).Infof("successfully removed entries %d to %d from the sequenced table", start, start+len)
 	return nil
 }
 

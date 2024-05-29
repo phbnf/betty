@@ -287,7 +287,7 @@ func (s *Storage) integrate(ctx context.Context) (uint64, error) {
 		//s.Unlock()
 	}()
 
-	entries, firstIdx, err := s.getStagedEntries(ctx)
+	entries, firstIdx, err := s.getSequencedEntries(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("getStagedEntries: %v", err)
 	}
@@ -379,7 +379,7 @@ func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize 
 	return nil
 }
 
-func (s *Storage) getStagedEntries(ctx context.Context) ([][]byte, uint64, error) {
+func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, error) {
 	keyCond := expression.Key("Logname").Equal(expression.Value(s.path))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
 	if err != nil {
@@ -409,7 +409,37 @@ func (s *Storage) getStagedEntries(ctx context.Context) ([][]byte, uint64, error
 
 	// return the actual start index!
 	return ret, entries[0].Idx, nil
+}
 
+func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64) error {
+	//TODO: batching. But it only allows 25 entries at a time
+	for i := start; i < start+len; i++ {
+		// TODO(phboneff): see if I can bundle everything in on transation
+		item := struct {
+			Logname string
+			Idx     uint64
+		}{
+			Logname: s.path,
+			Idx:     i,
+		}
+
+		av, err := attributevalue.MarshalMap(item)
+		if err != nil {
+			klog.Fatalf("Got error marshalling key to delete entries: %s", err)
+		}
+
+		input := &dynamodb.DeleteItemInput{
+			Key:       av,
+			TableName: aws.String(entriesTable),
+		}
+
+		// TODO(phboneff): fix context
+		_, err = s.ddb.DeleteItem(context.TODO(), input)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // doIntegrate handles integrating new entries into the log, and updating the checkpoint.

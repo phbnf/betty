@@ -138,7 +138,7 @@ func (s *Storage) lockAWS(table string) error {
 	}
 
 	// TODO(phboneff): fix context
-	output, err := s.ddb.PutItem(context.TODO(), input)
+	_, err = s.ddb.PutItem(context.TODO(), input)
 	if err != nil {
 		var cdte *dynamodbtypes.ConditionalCheckFailedException
 		if errors.As(err, &cdte) {
@@ -148,7 +148,6 @@ func (s *Storage) lockAWS(table string) error {
 			klog.Fatalf("Got error calling PutItem: %s", err)
 		}
 	}
-	klog.V(2).Infof("PutItem output: %+v", output)
 
 	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, table)
 	return nil

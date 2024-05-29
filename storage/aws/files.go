@@ -37,7 +37,7 @@ import (
 const (
 	lockTable      = "bettylog"
 	entriesTable   = "bettyentries"
-	sequencedTable = "bettysize"
+	sequencedTable = "bettysequenced"
 )
 
 // Storage implements storage functions on top of S3.
@@ -502,7 +502,31 @@ func (s *Storage) ReadSequencedIndex() (uint64, error) {
 	}
 
 	return val.Idx, nil
+}
 
+func (s *Storage) WriteSequencedIndex(idx uint64) error {
+	av, err := attributevalue.MarshalMap(struct {
+		Logname string
+		Idx     uint64
+	}{
+		Logname: s.path,
+		Idx:     idx,
+	})
+	if err != nil {
+		klog.Fatalf("Got error marshalling sequenced key: %s", err)
+	}
+
+	input := &dynamodb.PutItemInput{
+		Item:      av,
+		TableName: aws.String(sequencedTable),
+	}
+
+	_, err = s.ddb.PutItem(context.TODO(), input)
+	if err != nil {
+		return fmt.Errorf("error reading sequenced index from DynamoDB: %v", err)
+	}
+
+	return nil
 }
 
 func (s *Storage) NewTree(size uint64, hash []byte) error {

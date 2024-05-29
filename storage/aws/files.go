@@ -341,7 +341,13 @@ func (s *Storage) integrate(ctx context.Context) (uint64, error) {
 	}
 
 	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
-	return firstIdx, s.doIntegrate(ctx, firstIdx, entries)
+	err = s.doIntegrate(ctx, firstIdx, entries)
+	if err != nil {
+		return 0, fmt.Errorf("doIntegrate: %v", err)
+	}
+
+	// Then delete the entries that we have just integrated
+	return firstIdx, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
 }
 
 type Entry struct {

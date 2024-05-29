@@ -291,7 +291,7 @@ func (s *Storage) integrate(ctx context.Context) (uint64, error) {
 	size, _, _ := s.curTree(currCP)
 
 	if size != firstIdx {
-		return 0, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the sequenced index %d", firstIdx, size)
+		return 0, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the current checkpoint size: %d", firstIdx, size)
 	}
 
 	// TODO(phboneff): careful, need to make sure that two nodes don't override the same bundle. This is prob

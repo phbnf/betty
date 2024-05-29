@@ -35,8 +35,9 @@ import (
 )
 
 const (
-	lockTable    = "bettylog"
-	entriesTable = "bettyentries"
+	lockTable      = "bettylog"
+	entriesTable   = "bettyentries"
+	sequencedTable = "bettysize"
 )
 
 // Storage implements storage functions on top of S3.
@@ -216,7 +217,7 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 		return 0, fmt.Errorf("s.sequenceBatch(): %v", err)
 	}
 
-	_, _, err = s.getStagedEntries(ctx)
+	entries, _, err := s.getStagedEntries(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("getStagedEntries: %v", err)
 	}
@@ -234,8 +235,7 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 		bundle.Write(part)
 	}
 	// Add new entries to the bundle
-	// TODO(phboneff): read the entries from the batch table rather
-	for _, e := range batch.Entries {
+	for _, e := range entries {
 		bundle.WriteString(base64.StdEncoding.EncodeToString(e))
 		bundle.WriteString("\n")
 		entriesInBundle++
@@ -356,16 +356,24 @@ func (s *Storage) getStagedEntries(ctx context.Context) ([][]byte, uint64, error
 		ExpressionAttributeValues: expr.Values(),
 		ExpressionAttributeNames:  expr.Names(),
 		TableName:                 aws.String(entriesTable),
+		ConsistentRead:            aws.Bool(true),
 	}
 
 	output, err := s.ddb.Query(ctx, input)
 	if err != nil {
 		return nil, 0, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
+	ret := make([][]byte, len(output.Items))
+	entries := []Entry{}
+	if err := attributevalue.UnmarshalListOfMaps(output.Items, &entries); err != nil {
+		return nil, 0, fmt.Errorf("can't unmarshall entries: %v", err)
+	}
+	for i, e := range entries {
+		ret[i] = e.Value
+	}
 
-	fmt.Println(output.Items)
 	// return the actual start index!
-	return nil, 0, nil
+	return ret, entries[0].Idx, nil
 
 }
 
@@ -459,6 +467,42 @@ func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 func (s *Storage) ReadCheckpoint() ([]byte, error) {
 	// TODO(phboneff): make this read from DynamoDB instead
 	return s.ReadFile(filepath.Join(s.path, layout.CheckpointPath))
+}
+
+type SequencedKey struct {
+	Logname string `json:"logname"`
+}
+
+type SequencedVal struct {
+	Idx uint64
+}
+
+func (s *Storage) ReadSequencedIndex() (uint64, error) {
+	item := SequencedKey{
+		Logname: s.path,
+	}
+
+	av, err := attributevalue.MarshalMap(item)
+	if err != nil {
+		klog.Fatalf("Got error marshalling sequenced key: %s", err)
+	}
+
+	input := &dynamodb.GetItemInput{
+		Key:       av,
+		TableName: aws.String(sequencedTable),
+	}
+
+	output, err := s.ddb.GetItem(context.TODO(), input)
+	if err != nil {
+		return 0, fmt.Errorf("error reading sequenced index from DynamoDB: %v", err)
+	}
+	val := SequencedVal{}
+	if err := attributevalue.UnmarshalMap(output.Item, &val); err != nil {
+		return 0, fmt.Errorf("can't unmarshall sequenced index: %v", err)
+	}
+
+	return val.Idx, nil
+
 }
 
 func (s *Storage) NewTree(size uint64, hash []byte) error {

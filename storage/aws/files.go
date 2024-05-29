@@ -439,7 +439,7 @@ func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64)
 		// TODO(phboneff): fix context
 		_, err = s.ddb.DeleteItem(context.TODO(), input)
 		if err != nil {
-			return err
+			return fmt.Errorf("Could not delete entry %d: %v", i, err)
 		}
 	}
 	klog.V(2).Infof("successfully removed entries %d to %d from the sequenced table", start, start+len)

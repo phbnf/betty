@@ -44,9 +44,10 @@ const (
 // Storage implements storage functions on top of S3.
 type Storage struct {
 	sync.Mutex
-	params log.Params
-	path   string
-	pool   *writer.Pool
+	ddbMutex sync.Mutex
+	params   log.Params
+	path     string
+	pool     *writer.Pool
 
 	curTree CurrentTreeFunc
 	newTree NewTreeFunc
@@ -224,7 +225,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	// Double locking:
 	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
 	// - The Dynamodb `LockCP()` ensures that distinct tasks are serialised.
-	s.Lock()
+	s.ddbMutex.Lock()
 	if err := s.lockAWS(lockDDBTable); err != nil {
 		panic(err)
 	}
@@ -232,7 +233,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		if err := s.unlockAWS(lockDDBTable); err != nil {
 			panic(err)
 		}
-		s.Unlock()
+		s.ddbMutex.Unlock()
 	}()
 
 	currCP, err := s.ReadCheckpoint()
@@ -262,7 +263,6 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 }
 
 func (s *Storage) integrate(ctx context.Context) (uint64, error) {
-	// TODO(phboneff): add this again on a differt lock
 	s.Lock()
 	if err := s.lockAWS(lockS3Table); err != nil {
 		panic(err)
@@ -271,7 +271,6 @@ func (s *Storage) integrate(ctx context.Context) (uint64, error) {
 		if err := s.unlockAWS(lockS3Table); err != nil {
 			panic(err)
 		}
-		// TODO(phboneff): add this again on a differt lock
 		s.Unlock()
 	}()
 

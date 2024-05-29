@@ -337,36 +337,34 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, error) {
 	return firstIdx, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
 }
 
-type Entry struct {
+type Batch struct {
 	Logname string
 	Idx     uint64
-	Value   []byte
+	Value   [][]byte
 }
 
 func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize uint64) error {
-	for i, e := range entries {
-		// TODO(phboneff): see if I can bundle everything in on transation
-		item := Entry{
-			Logname: s.path,
-			Idx:     startSize + uint64(i),
-			Value:   e,
-		}
+	// TODO(phboneff): see if I can bundle everything in on transation
+	item := Batch{
+		Logname: s.path,
+		Idx:     startSize,
+		Value:   entries,
+	}
 
-		av, err := attributevalue.MarshalMap(item)
-		if err != nil {
-			klog.Fatalf("Got error marshalling new movie item: %s", err)
-		}
+	av, err := attributevalue.MarshalMap(item)
+	if err != nil {
+		klog.Fatalf("Got error marshalling new movie item: %s", err)
+	}
 
-		input := &dynamodb.PutItemInput{
-			Item:      av,
-			TableName: aws.String(entriesTable),
-		}
+	input := &dynamodb.PutItemInput{
+		Item:      av,
+		TableName: aws.String(entriesTable),
+	}
 
-		// TODO(phboneff): fix context
-		_, err = s.ddb.PutItem(context.TODO(), input)
-		if err != nil {
-			return err
-		}
+	// TODO(phboneff): fix context
+	_, err = s.ddb.PutItem(context.TODO(), input)
+	if err != nil {
+		return err
 	}
 	klog.V(2).Infof("Successfully staged entries from index %d to %v", startSize, startSize+uint64(len(entries)))
 
@@ -392,17 +390,18 @@ func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, er
 	if err != nil {
 		return nil, 0, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
-	ret := make([][]byte, len(output.Items))
+	var ret [][]byte
 	var start uint64
-	entries := []Entry{}
-	if err := attributevalue.UnmarshalListOfMaps(output.Items, &entries); err != nil {
+	batches := []Batch{}
+	if err := attributevalue.UnmarshalListOfMaps(output.Items, &batches); err != nil {
 		return nil, 0, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
-	for i, e := range entries {
-		ret[i] = e.Value
+	for _, b := range batches {
+		ret = append(ret, b.Value...)
+		// TODO(phboneff): handle non continous batches, even though that should never happen
 	}
-	if len(entries) > 0 {
-		start = entries[0].Idx
+	if len(batches) > 0 {
+		start = batches[0].Idx
 	}
 
 	// return the actual start index!

@@ -97,7 +97,6 @@ func main() {
 
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
 		n := time.Now()
-		defer func() { l.Add(time.Since(n)) }()
 
 		b, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -112,6 +111,7 @@ func main() {
 		}
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
 		r.Body.Close()
+		l.Add(time.Since(n))
 		s.Integrate(ctx)
 	})
 

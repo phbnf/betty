@@ -363,6 +363,7 @@ func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize 
 			return err
 		}
 	}
+	klog.V(2).Infof("Successfully staged entries from index %d to %v", startSize, startSize+uint64(len(entries)))
 
 	return nil
 }

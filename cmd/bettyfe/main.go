@@ -84,7 +84,7 @@ func main() {
 	ct := currentTree(vKey)
 	nt := newTree(*path, sKey)
 
-	s := aws.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt, *bucketName)
+	s := aws.New(ctx, *path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt, *bucketName)
 	l := &latency{}
 
 	if _, err := s.ReadCheckpoint(); err != nil {
@@ -112,7 +112,6 @@ func main() {
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
 		r.Body.Close()
 		l.Add(time.Since(n))
-		s.Integrate(ctx)
 	})
 
 	http.HandleFunc("GET /checkpoint", func(w http.ResponseWriter, r *http.Request) {

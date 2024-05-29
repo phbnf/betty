@@ -67,7 +67,7 @@ type NewTreeFunc func(size uint64, root []byte) ([]byte, error)
 type CurrentTreeFunc func([]byte) (uint64, []byte, error)
 
 // New creates a new S3 storage.
-func New(path string, params log.Params, batchMaxAge time.Duration, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string) *Storage {
+func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string) *Storage {
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		klog.V(1).Infof("Couldn't load default configuration: %v", err)
@@ -99,6 +99,19 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 	}
 
 	r.curSize = curSize
+
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				r.Integrate(ctx)
+			}
+		}
+	}()
 
 	return r
 }

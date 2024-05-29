@@ -35,7 +35,8 @@ import (
 )
 
 const (
-	lockTable      = "bettylog"
+	lockS3Table    = "bettylog"
+	lockDDBTable   = "bettyddblock"
 	entriesTable   = "bettyentries"
 	sequencedTable = "bettysequenced"
 )
@@ -101,18 +102,18 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 	return r
 }
 
-type CPLock struct {
+type Lock struct {
 	Logname string `json:"logname"`
 	ID      int64  `json:"id"`
 }
 
-// lockCP places a lock in DyamoDB for the checkpoint.
-// It puts a ID alongside this lock, which can only be removed
+// lockAWS places a lock in DyamoDB on a given table.
+// It puts a ID alongside this lockAWS, which can only be removed
 // by the instance that put it.
-// If it cannot put a lock, retries indefinitely.
-func (s *Storage) lockCP() error {
+// If it cannot put a lockAWS, retries indefinitely.
+func (s *Storage) lockAWS(table string) error {
 
-	item := CPLock{
+	item := Lock{
 		Logname: s.path,
 		ID:      s.id,
 	}
@@ -130,7 +131,7 @@ func (s *Storage) lockCP() error {
 
 	input := &dynamodb.PutItemInput{
 		Item:                      av,
-		TableName:                 aws.String(lockTable),
+		TableName:                 aws.String(table),
 		ConditionExpression:       expr.Condition(),
 		ExpressionAttributeValues: expr.Values(),
 		ExpressionAttributeNames:  expr.Names(),
@@ -142,24 +143,24 @@ func (s *Storage) lockCP() error {
 		var cdte *dynamodbtypes.ConditionalCheckFailedException
 		if errors.As(err, &cdte) {
 			// TODO(phboneff): better retry
-			s.lockCP()
+			s.lockAWS(table)
 		} else {
 			klog.Fatalf("Got error calling PutItem: %s", err)
 		}
 	}
 	klog.V(2).Infof("PutItem output: %+v", output)
 
-	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, lockTable)
+	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, lockS3Table)
 	return nil
 }
 
-type CPUnlock struct {
+type Unlock struct {
 	Logname string `json:"logname"`
 }
 
-// unlockCP unlocks the Checkpoint in DynamoDB for the storage's ID.
-func (s *Storage) unlockCP() error {
-	item := CPUnlock{
+// unlockAWS releases a lock in DynamoDB at a given table for the storage's ID.
+func (s *Storage) unlockAWS(table string) error {
+	item := Unlock{
 		Logname: s.path,
 	}
 
@@ -176,7 +177,7 @@ func (s *Storage) unlockCP() error {
 
 	input := &dynamodb.DeleteItemInput{
 		Key:                 av,
-		TableName:           aws.String(lockTable),
+		TableName:           aws.String(table),
 		ConditionExpression: expr.Condition(),
 	}
 
@@ -185,7 +186,7 @@ func (s *Storage) unlockCP() error {
 		klog.Fatalf("Got error calling DeleteItem: %s", err)
 	}
 
-	klog.V(2).Infof("Successfully Removed lock for %s to table %s", item.Logname, lockTable)
+	klog.V(2).Infof("Successfully Removed lock for %s to table %s", item.Logname, lockS3Table)
 	return nil
 }
 
@@ -212,19 +213,97 @@ func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byt
 // We try to minimise the number of partially complete entry bundles by writing entries in chunks rather
 // than one-by-one.
 func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Batch) (uint64, error) {
-	seq, err := s.sequenceBatch(ctx, batch)
+	_, err := s.sequenceBatch(ctx, batch)
 	if err != nil {
 		return 0, fmt.Errorf("s.sequenceBatch(): %v", err)
 	}
 
-	entries, _, err := s.getStagedEntries(ctx)
+	return s.integrate(ctx)
+}
+
+func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
+	// Double locking:
+	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
+	// - The Dynamodb `LockCP()` ensures that distinct tasks are serialised.
+	s.Lock()
+	if err := s.lockAWS(lockDDBTable); err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := s.unlockAWS(lockDDBTable); err != nil {
+			panic(err)
+		}
+		currCP, err := s.ReadCheckpoint()
+		if err != nil {
+			klog.Fatalf("Couldn't load checkpoint:  %v", err)
+		}
+		size, _, _ := s.curTree(currCP)
+		// TODO: edit this log message
+		klog.V(2).Infof("I am removing the lock, from checkpoint size: %d\n", size)
+		s.Unlock()
+	}()
+
+	currCP, err := s.ReadCheckpoint()
+	if err != nil {
+		klog.Fatalf("Couldn't load checkpoint:  %v", err)
+	}
+	size, _, err := s.curTree(currCP)
+	klog.V(2).Infof("I have the lock, from checkpoint size: %d\n", size)
+
+	if err != nil {
+		return 0, err
+	}
+	s.curSize = size
+
+	if len(batch.Entries) == 0 {
+		return 0, nil
+	}
+	seq := s.curSize
+
+	if err := s.stageEntries(ctx, batch.Entries, seq); err != nil {
+		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
+	}
+	return seq, nil
+}
+
+func (s *Storage) integrate(ctx context.Context) (uint64, error) {
+	// TODO(phboneff): add this again on a differt lock
+	//s.Lock()
+	if err := s.lockAWS(lockS3Table); err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := s.unlockAWS(lockS3Table); err != nil {
+			panic(err)
+		}
+		currCP, err := s.ReadCheckpoint()
+		if err != nil {
+			klog.Fatalf("Couldn't load checkpoint:  %v", err)
+		}
+		size, _, _ := s.curTree(currCP)
+		// TODO: edit this log message
+		klog.V(2).Infof("I am removing the lock, from checkpoint size: %d\n", size)
+		// TODO(phboneff): add this again on a differt lock
+		//s.Unlock()
+	}()
+
+	entries, firstIdx, err := s.getStagedEntries(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("getStagedEntries: %v", err)
 	}
 
+	nextIdx, err := s.ReadSequencedIndex()
+	if err != nil {
+		return 0, fmt.Errorf("ReadSequencedIndex: %v", err)
+	}
+
+	if nextIdx != firstIdx {
+		return 0, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the sequenced index %d", firstIdx, nextIdx)
+	}
+
 	// TODO(phboneff): careful, need to make sure that two nodes don't override the same bundle. This is prob
 	// done by reading the bundle form the table at all times, and not from this function
-	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
+	bundleIndex, entriesInBundle := firstIdx/uint64(s.params.EntryBundleSize), firstIdx%uint64(s.params.EntryBundleSize)
 	bundle := &bytes.Buffer{}
 	if entriesInBundle > 0 {
 		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
@@ -262,51 +341,7 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 	}
 
 	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
-	return seq, s.doIntegrate(ctx, seq, batch.Entries)
-}
-
-func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
-	// Double locking:
-	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
-	// - The Dynamodb `LockCP()` ensures that distinct tasks are serialised.
-	s.Lock()
-	if err := s.lockCP(); err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := s.unlockCP(); err != nil {
-			panic(err)
-		}
-		currCP, err := s.ReadCheckpoint()
-		if err != nil {
-			klog.Fatalf("Couldn't load checkpoint:  %v", err)
-		}
-		size, _, _ := s.curTree(currCP)
-		klog.V(2).Infof("I am removing the lock, from checkpoint size: %d\n", size)
-		s.Unlock()
-	}()
-
-	currCP, err := s.ReadCheckpoint()
-	if err != nil {
-		klog.Fatalf("Couldn't load checkpoint:  %v", err)
-	}
-	size, _, err := s.curTree(currCP)
-	klog.V(2).Infof("I have the lock, from checkpoint size: %d\n", size)
-
-	if err != nil {
-		return 0, err
-	}
-	s.curSize = size
-
-	if len(batch.Entries) == 0 {
-		return 0, nil
-	}
-	seq := s.curSize
-
-	if err := s.stageEntries(ctx, batch.Entries, seq); err != nil {
-		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
-	}
-	return seq, nil
+	return firstIdx, s.doIntegrate(ctx, firstIdx, entries)
 }
 
 type Entry struct {

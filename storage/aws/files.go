@@ -87,7 +87,7 @@ func New(path string, params log.Params, batchMaxAge time.Duration, curTree Curr
 		ddb:     *ddbClient,
 	}
 
-	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatchAndIntegrate)
+	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
 
 	currCP, err := r.ReadCheckpoint()
 	if err != nil {
@@ -218,7 +218,7 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 		return 0, fmt.Errorf("s.sequenceBatch(): %v", err)
 	}
 
-	return s.integrate(ctx)
+	return s.Integrate(ctx)
 }
 
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
@@ -251,7 +251,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	return seq, nil
 }
 
-func (s *Storage) integrate(ctx context.Context) (uint64, error) {
+func (s *Storage) Integrate(ctx context.Context) (uint64, error) {
 	s.Lock()
 	if err := s.lockAWS(lockS3Table); err != nil {
 		panic(err)

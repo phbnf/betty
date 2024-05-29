@@ -112,6 +112,7 @@ func main() {
 			return
 		}
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
+		s.Integrate(ctx)
 	})
 
 	http.HandleFunc("GET /checkpoint", func(w http.ResponseWriter, r *http.Request) {

@@ -263,7 +263,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 
 func (s *Storage) integrate(ctx context.Context) (uint64, error) {
 	// TODO(phboneff): add this again on a differt lock
-	//s.Lock()
+	s.Lock()
 	if err := s.lockAWS(lockS3Table); err != nil {
 		panic(err)
 	}
@@ -272,7 +272,7 @@ func (s *Storage) integrate(ctx context.Context) (uint64, error) {
 			panic(err)
 		}
 		// TODO(phboneff): add this again on a differt lock
-		//s.Unlock()
+		s.Unlock()
 	}()
 
 	entries, firstIdx, err := s.getSequencedEntries(ctx)

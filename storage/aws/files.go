@@ -246,7 +246,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	if err := s.stageEntries(ctx, batch.Entries, seq); err != nil {
 		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
 	}
-	klog.V(1).Infof("took %v to stage the sequenced entries", time.Since(n))
+	klog.V(1).Infof("took %v to stage the %v sequenced entries", time.Since(n), len(batch.Entries))
 	n = time.Now()
 
 	if err := s.WriteSequencedIndex(seq + uint64(len(batch.Entries))); err != nil {

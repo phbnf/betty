@@ -558,8 +558,9 @@ func (s *Storage) ReadSequencedIndex() (uint64, error) {
 	}
 
 	input := &dynamodb.GetItemInput{
-		Key:       av,
-		TableName: aws.String(sequencedTable),
+		Key:            av,
+		TableName:      aws.String(sequencedTable),
+		ConsistentRead: aws.Bool(true),
 	}
 
 	output, err := s.ddb.GetItem(context.TODO(), input)

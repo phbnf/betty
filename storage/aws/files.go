@@ -263,6 +263,10 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	if err := s.stageEntries(ctx, batch.Entries, seq); err != nil {
 		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
 	}
+
+	if err := s.WriteSequencedIndex(seq + uint64(len(batch.Entries))); err != nil {
+		return 0, fmt.Errorf("couldn't commit to the sequenced Index: %v", err)
+	}
 	return seq, nil
 }
 
@@ -292,13 +296,19 @@ func (s *Storage) integrate(ctx context.Context) (uint64, error) {
 		return 0, fmt.Errorf("getStagedEntries: %v", err)
 	}
 
-	nextIdx, err := s.ReadSequencedIndex()
-	if err != nil {
-		return 0, fmt.Errorf("ReadSequencedIndex: %v", err)
+	if len(entries) == 0 {
+		klog.V(2).Info("nothing to integrate")
+		return 0, nil
 	}
 
-	if nextIdx != firstIdx {
-		return 0, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the sequenced index %d", firstIdx, nextIdx)
+	currCP, err := s.ReadCheckpoint()
+	if err != nil {
+		klog.Fatalf("Couldn't load checkpoint:  %v", err)
+	}
+	size, _, _ := s.curTree(currCP)
+
+	if size != firstIdx {
+		return 0, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the sequenced index %d", firstIdx, size)
 	}
 
 	// TODO(phboneff): careful, need to make sure that two nodes don't override the same bundle. This is prob
@@ -405,6 +415,7 @@ func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, er
 		return nil, 0, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
 	ret := make([][]byte, len(output.Items))
+	var start uint64
 	entries := []Entry{}
 	if err := attributevalue.UnmarshalListOfMaps(output.Items, &entries); err != nil {
 		return nil, 0, fmt.Errorf("can't unmarshall entries: %v", err)
@@ -412,9 +423,12 @@ func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, er
 	for i, e := range entries {
 		ret[i] = e.Value
 	}
+	if len(entries) > 0 {
+		start = entries[0].Idx
+	}
 
 	// return the actual start index!
-	return ret, entries[0].Idx, nil
+	return ret, start, nil
 }
 
 func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64) error {

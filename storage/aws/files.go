@@ -340,7 +340,6 @@ func (s *Storage) integrate(ctx context.Context) (uint64, error) {
 	}
 
 	// Then delete the entries that we have just integrated
-	fmt.Println("alskjdgflkasjdlkgsajlkdg")
 	return firstIdx, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
 }
 

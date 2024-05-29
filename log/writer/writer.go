@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"sync"
 	"time"
-
-	"k8s.io/klog/v2"
 )
 
 type Batch struct {
@@ -45,9 +43,7 @@ type Pool struct {
 // Add adds an entry to the tree.
 // Returns the assigned sequence number, or an error.
 func (p *Pool) Add(e []byte) (uint64, error) {
-	t := time.Now()
 	p.Lock()
-	klog.V(1).Infof("Waited for %v in order to get a sequencing lock", time.Since(t))
 	b := p.current
 	if len(b.Entries) == 0 {
 		p.flushTimer = time.AfterFunc(p.maxAge, func() {

@@ -236,21 +236,10 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		s.ddbMutex.Unlock()
 	}()
 
-	currCP, err := s.ReadCheckpoint()
+	seq, err := s.ReadSequencedIndex()
 	if err != nil {
-		klog.Fatalf("Couldn't load checkpoint:  %v", err)
+		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)
 	}
-	size, _, err := s.curTree(currCP)
-
-	if err != nil {
-		return 0, err
-	}
-	s.curSize = size
-
-	if len(batch.Entries) == 0 {
-		return 0, nil
-	}
-	seq := s.curSize
 
 	if err := s.stageEntries(ctx, batch.Entries, seq); err != nil {
 		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
@@ -439,7 +428,7 @@ func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64)
 		// TODO(phboneff): fix context
 		_, err = s.ddb.DeleteItem(context.TODO(), input)
 		if err != nil {
-			return fmt.Errorf("Could not delete entry %d: %v", i, err)
+			return fmt.Errorf("could not delete entry %d: %v", i, err)
 		}
 	}
 	klog.V(2).Infof("successfully removed entries %d to %d from the sequenced table", start, start+len)

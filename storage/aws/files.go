@@ -233,13 +233,6 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		if err := s.unlockAWS(lockDDBTable); err != nil {
 			panic(err)
 		}
-		currCP, err := s.ReadCheckpoint()
-		if err != nil {
-			klog.Fatalf("Couldn't load checkpoint:  %v", err)
-		}
-		size, _, _ := s.curTree(currCP)
-		// TODO: edit this log message
-		klog.V(2).Infof("I am removing the lock, from checkpoint size: %d\n", size)
 		s.Unlock()
 	}()
 
@@ -248,7 +241,6 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		klog.Fatalf("Couldn't load checkpoint:  %v", err)
 	}
 	size, _, err := s.curTree(currCP)
-	klog.V(2).Infof("I have the lock, from checkpoint size: %d\n", size)
 
 	if err != nil {
 		return 0, err
@@ -280,13 +272,6 @@ func (s *Storage) integrate(ctx context.Context) (uint64, error) {
 		if err := s.unlockAWS(lockS3Table); err != nil {
 			panic(err)
 		}
-		currCP, err := s.ReadCheckpoint()
-		if err != nil {
-			klog.Fatalf("Couldn't load checkpoint:  %v", err)
-		}
-		size, _, _ := s.curTree(currCP)
-		// TODO: edit this log message
-		klog.V(2).Infof("I am removing the lock, from checkpoint size: %d\n", size)
 		// TODO(phboneff): add this again on a differt lock
 		//s.Unlock()
 	}()
@@ -357,6 +342,7 @@ func (s *Storage) integrate(ctx context.Context) (uint64, error) {
 	}
 
 	// Then delete the entries that we have just integrated
+	fmt.Println("alskjdgflkasjdlkgsajlkdg")
 	return firstIdx, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
 }
 

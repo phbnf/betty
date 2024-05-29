@@ -104,7 +104,6 @@ func main() {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		defer r.Body.Close()
 		idx, err := s.Sequence(ctx, b)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -112,6 +111,7 @@ func main() {
 			return
 		}
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
+		r.Body.Close()
 		s.Integrate(ctx)
 	})
 

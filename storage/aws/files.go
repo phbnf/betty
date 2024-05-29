@@ -222,6 +222,7 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 }
 
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
+	n := time.Now()
 	// Double locking:
 	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
 	// - The Dynamodb `LockCP()` ensures that distinct tasks are serialised.
@@ -240,14 +241,19 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	if err != nil {
 		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)
 	}
+	klog.V(2).Infof("took %v to read the current sequenced index", time.Since(n))
+	n = time.Now()
 
 	if err := s.stageEntries(ctx, batch.Entries, seq); err != nil {
 		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
 	}
+	klog.V(2).Infof("took %v to stage the sequenced entries", time.Since(n))
+	n = time.Now()
 
 	if err := s.WriteSequencedIndex(seq + uint64(len(batch.Entries))); err != nil {
 		return 0, fmt.Errorf("couldn't commit to the sequenced Index: %v", err)
 	}
+	klog.V(2).Infof("took %v to write the new sequenced index", time.Since(n))
 	return seq, nil
 }
 

@@ -305,7 +305,7 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	klog.V(1).Infof("took %v to place an integration lock", time.Since(t))
 	t = time.Now()
 
-	entries, firstIdx, more, err := s.getSequencedEntries(ctx)
+	entries, firstIdx, more, err := s.getSequencedBundles(ctx)
 	if err != nil {
 		return 0, false, fmt.Errorf("getStagedEntries: %v", err)
 	}
@@ -417,7 +417,7 @@ func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize 
 	return nil
 }
 
-func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, bool, error) {
+func (s *Storage) getSequencedBundles(ctx context.Context) ([][]byte, uint64, bool, error) {
 	batchAtATime := 4
 	// TODO: handle more bundles better than this
 	keyCond := expression.Key("Logname").Equal(expression.Value(s.path))
@@ -463,6 +463,38 @@ func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, bo
 
 	// return the actual start index!
 	return ret, start, (len(output.Items) > batchAtATime), nil
+}
+
+func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte, error) {
+	key := struct {
+		Logname string
+		Idx     uint64
+	}{
+		Logname: s.path,
+		Idx:     idx,
+	}
+
+	av, err := attributevalue.MarshalMap(key)
+	if err != nil {
+		klog.Fatalf("Got error marshalling sequenced key: %s", err)
+	}
+
+	input := &dynamodb.GetItemInput{
+		TableName:      aws.String(entriesTable),
+		Key:            av,
+		ConsistentRead: aws.Bool(true),
+	}
+
+	output, err := s.ddb.GetItem(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
+	}
+	val := Batch{}
+	if err := attributevalue.UnmarshalMap(output.Item, &val); err != nil {
+		return nil, fmt.Errorf("can't unmarshall sequenced index: %v", err)
+	}
+
+	return val.Value, nil
 }
 
 func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64) error {

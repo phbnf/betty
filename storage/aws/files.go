@@ -397,9 +397,11 @@ func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, er
 		ExpressionAttributeNames:  expr.Names(),
 		TableName:                 aws.String(entriesTable),
 		ConsistentRead:            aws.Bool(true),
+		Limit:                     aws.Int32(1),
 	}
 
 	output, err := s.ddb.Query(ctx, input)
+	klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)
 	if err != nil {
 		return nil, 0, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}

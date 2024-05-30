@@ -276,7 +276,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	klog.V(1).Infof("took %v to read the current sequenced index", time.Since(n))
 	n = time.Now()
 
-	if err := s.stageEntries(ctx, batch.Entries, seq); err != nil {
+	if err := s.sequenceEntries(ctx, batch.Entries, seq); err != nil {
 		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
 	}
 	klog.V(1).Infof("took %v to stage the %v sequenced entries", time.Since(n), len(batch.Entries))
@@ -380,7 +380,9 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	klog.V(1).Infof("took %v to integrate %d entries starting at %d", time.Since(t), len(entries), firstIdx)
 	// Then delete the entries that we have just integrated
 	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index
-	return firstIdx, more, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
+	//return firstIdx, more, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
+	firstBundleIndex := uint64(s.params.EntryBundleSize)
+	return firstIdx, more, s.deleteSequencedEntries(ctx, firstBundleIndex, bundleIndex-firstBundleIndex+1)
 }
 
 type Batch struct {
@@ -389,7 +391,75 @@ type Batch struct {
 	Value   [][]byte
 }
 
+func (s *Storage) sequenceEntries(ctx context.Context, entries [][]byte, firstIdx uint64) error {
+	// done by reading the bundle form the table at all times, and not from this function
+	bundleIndex, entriesInBundle := firstIdx/uint64(s.params.EntryBundleSize), firstIdx%uint64(s.params.EntryBundleSize)
+	bundle := [][]byte{}
+	if entriesInBundle > 0 {
+		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
+		// TODO: maybe store partial indexes
+		part, err := s.getSequencedBundle(ctx, bundleIndex)
+		if err != nil {
+			return err
+		}
+		bundle = append(bundle, part...)
+	}
+	// Add new entries to the bundle
+	for _, e := range entries {
+		encoded := []byte(base64.StdEncoding.EncodeToString(e))
+		bundle = append(bundle, encoded)
+		entriesInBundle++
+		if entriesInBundle == uint64(s.params.EntryBundleSize) {
+			//  This bundle is full, so we need to write it out...
+			//  bd, bf := layout.SeqPath(s.path, bundleIndex)
+			if err := s.stageBundle(ctx, bundle, bundleIndex); err != nil {
+				return err
+			}
+			// ... and prepare the next entry bundle for any remaining entries in the batch
+			bundleIndex++
+			entriesInBundle = 0
+			bundle = [][]byte{}
+		}
+	}
+	// If we have a partial bundle remaining once we've added all the entries from the batch,
+	// this needs writing out too.
+	if entriesInBundle > 0 {
+		if err := s.stageBundle(ctx, bundle, bundleIndex); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx uint64) error {
+	// TODO(phboneff): remove this method
+	item := Batch{
+		Logname: s.path,
+		Idx:     bundleIdx,
+		Value:   entries,
+	}
+
+	av, err := attributevalue.MarshalMap(item)
+	if err != nil {
+		klog.Fatalf("Got error marshalling new movie item: %s", err)
+	}
+
+	input := &dynamodb.PutItemInput{
+		Item:      av,
+		TableName: aws.String(entriesTable),
+	}
+
+	// TODO(phboneff): fix context
+	_, err = s.ddb.PutItem(ctx, input)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize uint64) error {
+	// TODO(phboneff): remove this method
 	// TODO(phboneff): see if I can bundle everything in on transation
 	item := Batch{
 		Logname: s.path,

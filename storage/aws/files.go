@@ -367,6 +367,7 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 		return 0, false, fmt.Errorf("doIntegrate: %v", err)
 	}
 
+	klog.V(2).Infof("Integrated %d entries starting at %d", len(entries), firstIdx)
 	// Then delete the entries that we have just integrated
 	return firstIdx, more, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
 }

@@ -290,6 +290,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 }
 
 func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
+	t := time.Now()
 	s.Lock()
 	if err := s.lockAWS(lockS3Table); err != nil {
 		panic(err)
@@ -301,11 +302,15 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 		s.Unlock()
 	}()
 
-	entries, firstIdx, more, err := s.getSequencedEntries(ctx)
+	klog.V(1).Infof("took %v to place an integration lock", time.Since(t))
+	t = time.Now()
 
+	entries, firstIdx, more, err := s.getSequencedEntries(ctx)
 	if err != nil {
 		return 0, false, fmt.Errorf("getStagedEntries: %v", err)
 	}
+	klog.V(1).Infof("took %v to read entries to integrate", time.Since(t))
+	t = time.Now()
 
 	if len(entries) == 0 {
 		klog.V(2).Info("nothing to integrate")
@@ -321,6 +326,8 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	if size != firstIdx {
 		return 0, false, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the current checkpoint size: %d", firstIdx, size)
 	}
+	klog.V(1).Infof("took %v to read the checkpoint to integrate to", time.Since(t))
+	t = time.Now()
 
 	// TODO(phboneff): careful, need to make sure that two nodes don't override the same bundle. This is prob
 	// done by reading the bundle form the table at all times, and not from this function
@@ -360,6 +367,8 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 			return 0, false, err
 		}
 	}
+	klog.V(1).Infof("took %v to read write entires to integrate S3", time.Since(t))
+	t = time.Now()
 
 	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
 	err = s.doIntegrate(ctx, firstIdx, entries)
@@ -367,8 +376,10 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 		return 0, false, fmt.Errorf("doIntegrate: %v", err)
 	}
 
-	klog.V(2).Infof("Integrated %d entries starting at %d", len(entries), firstIdx)
+	klog.V(2).Infof("Integrated ")
+	klog.V(1).Infof("took %v to integrate %d entries starting at %d", time.Since(t), len(entries), firstIdx)
 	// Then delete the entries that we have just integrated
+	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index
 	return firstIdx, more, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
 }
 

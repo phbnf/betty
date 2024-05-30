@@ -108,7 +108,15 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				r.Integrate(ctx)
+				// TODO: handle errors
+				_, more, _ := r.Integrate(ctx)
+				for {
+					if more {
+						_, more, _ = r.Integrate(ctx)
+					} else {
+						break
+					}
+				}
 			}
 		}
 	}()
@@ -230,7 +238,19 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 		return 0, fmt.Errorf("s.sequenceBatch(): %v", err)
 	}
 
-	return s.Integrate(ctx)
+	more := true
+	var size uint64
+	for {
+		if more {
+			size, more, err = s.Integrate(ctx)
+			if err != nil {
+				return 0, fmt.Errorf("s.Integrate(): %v", err)
+			}
+		} else {
+			break
+		}
+	}
+	return size, err
 }
 
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
@@ -269,7 +289,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	return seq, nil
 }
 
-func (s *Storage) Integrate(ctx context.Context) (uint64, error) {
+func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	s.Lock()
 	if err := s.lockAWS(lockS3Table); err != nil {
 		panic(err)
@@ -281,14 +301,15 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, error) {
 		s.Unlock()
 	}()
 
-	entries, firstIdx, err := s.getSequencedEntries(ctx)
+	entries, firstIdx, more, err := s.getSequencedEntries(ctx)
+
 	if err != nil {
-		return 0, fmt.Errorf("getStagedEntries: %v", err)
+		return 0, false, fmt.Errorf("getStagedEntries: %v", err)
 	}
 
 	if len(entries) == 0 {
 		klog.V(2).Info("nothing to integrate")
-		return 0, nil
+		return 0, false, nil
 	}
 
 	currCP, err := s.ReadCheckpoint()
@@ -298,7 +319,7 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, error) {
 	size, _, _ := s.curTree(currCP)
 
 	if size != firstIdx {
-		return 0, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the current checkpoint size: %d", firstIdx, size)
+		return 0, false, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the current checkpoint size: %d", firstIdx, size)
 	}
 
 	// TODO(phboneff): careful, need to make sure that two nodes don't override the same bundle. This is prob
@@ -309,7 +330,7 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, error) {
 		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
 		part, err := s.GetEntryBundle(ctx, bundleIndex, entriesInBundle)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		bundle.Write(part)
 	}
@@ -322,7 +343,7 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, error) {
 			//  This bundle is full, so we need to write it out...
 			bd, bf := layout.SeqPath(s.path, bundleIndex)
 			if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
-				return 0, err
+				return 0, false, err
 			}
 			// ... and prepare the next entry bundle for any remaining entries in the batch
 			bundleIndex++
@@ -336,18 +357,18 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, error) {
 		bd, bf := layout.SeqPath(s.path, bundleIndex)
 		bf = fmt.Sprintf("%s.%d", bf, entriesInBundle)
 		if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 	}
 
 	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
 	err = s.doIntegrate(ctx, firstIdx, entries)
 	if err != nil {
-		return 0, fmt.Errorf("doIntegrate: %v", err)
+		return 0, false, fmt.Errorf("doIntegrate: %v", err)
 	}
 
 	// Then delete the entries that we have just integrated
-	return firstIdx, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
+	return firstIdx, more, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
 }
 
 type Batch struct {
@@ -384,7 +405,8 @@ func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize 
 	return nil
 }
 
-func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, error) {
+func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, bool, error) {
+	// TODO: handle more bundles better than this
 	keyCond := expression.Key("Logname").Equal(expression.Value(s.path))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
 	if err != nil {
@@ -397,19 +419,22 @@ func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, er
 		ExpressionAttributeNames:  expr.Names(),
 		TableName:                 aws.String(entriesTable),
 		ConsistentRead:            aws.Bool(true),
-		Limit:                     aws.Int32(1),
+		Limit:                     aws.Int32(2),
 	}
 
 	output, err := s.ddb.Query(ctx, input)
 	klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)
 	if err != nil {
-		return nil, 0, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
+		return nil, 0, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
 	var ret [][]byte
 	var start uint64
 	batches := []Batch{}
-	if err := attributevalue.UnmarshalListOfMaps(output.Items, &batches); err != nil {
-		return nil, 0, fmt.Errorf("can't unmarshall entries: %v", err)
+	if len(output.Items) == 0 {
+		return ret, start, false, nil
+	}
+	if err := attributevalue.UnmarshalListOfMaps(output.Items[:1], &batches); err != nil {
+		return nil, 0, false, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
 	for _, b := range batches {
 		ret = append(ret, b.Value...)
@@ -420,7 +445,7 @@ func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, er
 	}
 
 	// return the actual start index!
-	return ret, start, nil
+	return ret, start, (len(output.Items) > 1), nil
 }
 
 func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64) error {

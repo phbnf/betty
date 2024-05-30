@@ -407,6 +407,7 @@ func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize 
 }
 
 func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, bool, error) {
+	batchAtATime := 4
 	// TODO: handle more bundles better than this
 	keyCond := expression.Key("Logname").Equal(expression.Value(s.path))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
@@ -420,7 +421,7 @@ func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, bo
 		ExpressionAttributeNames:  expr.Names(),
 		TableName:                 aws.String(entriesTable),
 		ConsistentRead:            aws.Bool(true),
-		Limit:                     aws.Int32(2),
+		Limit:                     aws.Int32(int32(batchAtATime) + 1),
 	}
 
 	output, err := s.ddb.Query(ctx, input)
@@ -434,19 +435,23 @@ func (s *Storage) getSequencedEntries(ctx context.Context) ([][]byte, uint64, bo
 	if len(output.Items) == 0 {
 		return ret, start, false, nil
 	}
-	if err := attributevalue.UnmarshalListOfMaps(output.Items[:1], &batches); err != nil {
+	n := len(output.Items)
+	if n > batchAtATime {
+		n = batchAtATime
+	}
+	if err := attributevalue.UnmarshalListOfMaps(output.Items[:n], &batches); err != nil {
 		return nil, 0, false, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
 	for _, b := range batches {
 		ret = append(ret, b.Value...)
 		// TODO(phboneff): handle non continous batches, even though that should never happen
 	}
-	if len(batches) > 0 {
+	if len(batches) >= batchAtATime {
 		start = batches[0].Idx
 	}
 
 	// return the actual start index!
-	return ret, start, (len(output.Items) > 1), nil
+	return ret, start, (len(output.Items) > batchAtATime), nil
 }
 
 func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64) error {

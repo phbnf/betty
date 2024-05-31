@@ -342,47 +342,6 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	klog.V(1).Infof("took %v to read the checkpoint to integrate to", time.Since(t))
 	t = time.Now()
 
-	// TODO(phboneff): careful, need to make sure that two nodes don't override the same bundle. This is prob
-	// done by reading the bundle form the table at all times, and not from this function
-	bundleIndex, entriesInBundle := size/uint64(s.params.EntryBundleSize), nextIdx%uint64(s.params.EntryBundleSize)
-	bundle := &bytes.Buffer{}
-	if entriesInBundle > 0 {
-		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
-		part, err := s.GetEntryBundle(ctx, bundleIndex, entriesInBundle)
-		if err != nil {
-			return 0, false, err
-		}
-		bundle.Write(part)
-	}
-	// Add new entries to the bundle
-	for _, e := range entries {
-		bundle.WriteString(base64.StdEncoding.EncodeToString(e))
-		bundle.WriteString("\n")
-		entriesInBundle++
-		if entriesInBundle == uint64(s.params.EntryBundleSize) {
-			//  This bundle is full, so we need to write it out...
-			bd, bf := layout.SeqPath(s.path, bundleIndex)
-			if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
-				return 0, false, err
-			}
-			// ... and prepare the next entry bundle for any remaining entries in the batch
-			bundleIndex++
-			entriesInBundle = 0
-			bundle = &bytes.Buffer{}
-		}
-	}
-	// If we have a partial bundle remaining once we've added all the entries from the batch,
-	// this needs writing out too.
-	if entriesInBundle > 0 {
-		bd, bf := layout.SeqPath(s.path, bundleIndex)
-		bf = fmt.Sprintf("%s.%d", bf, entriesInBundle)
-		if err := s.WriteFile(filepath.Join(bd, bf), bundle.Bytes()); err != nil {
-			return 0, false, err
-		}
-	}
-	klog.V(1).Infof("took %v to read write entires to integrate S3", time.Since(t))
-	t = time.Now()
-
 	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
 	err = s.doIntegrate(ctx, size, entries)
 	if err != nil {

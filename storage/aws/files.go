@@ -362,6 +362,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	// Then delete the bundles that we will never need to integrate again
 	firstEntryIndex := firstBundleIndex * uint64(s.params.EntryBundleSize)
 	fullBundles := (firstEntryIndex + uint64(len(entries))) / uint64(s.params.EntryBundleSize)
+	klog.V(2).Infof("Will delete %d bundles from %d", fullBundles, firstBundleIndex)
 	if err := s.deleteSequencedBundles(ctx, firstBundleIndex, fullBundles); err != nil {
 		return false, fmt.Errorf("deleteSequencedBundles(): err")
 	}

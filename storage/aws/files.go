@@ -379,7 +379,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 							Value: []dynamodbtypes.AttributeValue{},
 						},
 					},
-					UpdateExpression: aws.String("SET Value = list_apend(if_not_exists(Value, :empty_list), :entries)"),
+					UpdateExpression: aws.String("SET Entries = list_apend(if_not_exists(Entries, :empty_list), :entries)"),
 					TableName:        aws.String(entriesTable),
 				},
 			},
@@ -392,7 +392,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 						"Idx": &dynamodbtypes.AttributeValueMemberN{
 							Value: string(bundleIndex + 1),
 						},
-						"Value": &dynamodbtypes.AttributeValueMemberL{
+						"Entries": &dynamodbtypes.AttributeValueMemberL{
 							Value: entries_next,
 						},
 					},
@@ -450,13 +450,13 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	for _, b := range batches {
 		// Write bundles to S3
 		bd, bf := layout.SeqPath(s.path, b.Idx)
-		if len(b.Value) < s.params.EntryBundleSize {
-			bf = fmt.Sprintf("%s.%d", bf, len(b.Value))
+		if len(b.Entries) < s.params.EntryBundleSize {
+			bf = fmt.Sprintf("%s.%d", bf, len(b.Entries))
 		}
 		// TODO: do something more eleguqnt than this
-		data := []byte(strings.Join(b.Value, "\n"))
+		data := []byte(strings.Join(b.Entries, "\n"))
 		s.WriteFile(filepath.Join(bd, bf), data)
-		for i, e := range b.Value {
+		for i, e := range b.Entries {
 			// Only start integrating entries past the current checkpoint
 			if b.Idx*(uint64(s.params.EntryBundleSize))+uint64(i) >= size {
 				entries = append(entries, []byte(e))
@@ -489,7 +489,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 type Batch struct {
 	Logname string
 	Idx     uint64
-	Value   []string
+	Entries []string
 }
 
 func (s *Storage) sequenceEntries(ctx context.Context, entries [][]byte, firstIdx uint64) error {
@@ -539,7 +539,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	item := Batch{
 		Logname: s.path,
 		Idx:     bundleIdx,
-		Value:   value,
+		Entries: value,
 	}
 	av, err := attributevalue.MarshalMap(item)
 	fmt.Println(av)
@@ -627,8 +627,8 @@ func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte,
 	if err := attributevalue.UnmarshalMap(output.Item, &val); err != nil {
 		return nil, fmt.Errorf("can't unmarshall sequenced index: %v", err)
 	}
-	ret := make([][]byte, len(val.Value))
-	for i, e := range val.Value {
+	ret := make([][]byte, len(val.Entries))
+	for i, e := range val.Entries {
 		ret[i] = []byte(e)
 	}
 

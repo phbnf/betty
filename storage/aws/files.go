@@ -473,6 +473,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 			Value: vals,
 		},
 	}
+	fmt.Println("VAL")
 	fmt.Println(vals)
 	//av, err := attributevalue.MarshalMap(item)
 	//av["Value"] = vals

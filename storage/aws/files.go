@@ -379,7 +379,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 							Value: []dynamodbtypes.AttributeValue{},
 						},
 					},
-					UpdateExpression: aws.String("SET Entries = list_apend(if_not_exists(Entries, :empty_list), :entries)"),
+					UpdateExpression: aws.String("SET Entries = list_append(if_not_exists(Entries, :empty_list), :entries)"),
 					TableName:        aws.String(entriesTable),
 				},
 			},

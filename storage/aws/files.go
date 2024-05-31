@@ -59,6 +59,8 @@ type Storage struct {
 	s3     s3.Client
 	id     int64
 	ddb    dynamodb.Client
+
+	integrateBundleBatchSize int
 }
 
 // NewTreeFunc is the signature of a function which receives information about newly integrated trees.
@@ -68,7 +70,7 @@ type NewTreeFunc func(size uint64, root []byte) ([]byte, error)
 type CurrentTreeFunc func([]byte) (uint64, []byte, error)
 
 // New creates a new S3 and DDB Storage
-func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string) *Storage {
+func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, integrateBundleBatchSize int) *Storage {
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		klog.V(1).Infof("Couldn't load default configuration: %v", err)
@@ -78,14 +80,15 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 	ddbClient := dynamodb.NewFromConfig(sdkConfig)
 
 	r := &Storage{
-		path:    path,
-		params:  params,
-		curTree: curTree,
-		newTree: newTree,
-		bucket:  bucketName,
-		s3:      *s3Client,
-		id:      rand.Int63(),
-		ddb:     *ddbClient,
+		path:                     path,
+		params:                   params,
+		curTree:                  curTree,
+		newTree:                  newTree,
+		bucket:                   bucketName,
+		s3:                       *s3Client,
+		id:                       rand.Int63(),
+		ddb:                      *ddbClient,
+		integrateBundleBatchSize: integrateBundleBatchSize,
 	}
 
 	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
@@ -319,7 +322,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	t = time.Now()
 
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
-	batches, more, err := s.getSequencedBundles(ctx, size/uint64(s.params.EntryBundleSize))
+	batches, more, err := s.getSequencedBundles(ctx, size/uint64(s.params.EntryBundleSize), s.integrateBundleBatchSize)
 	if err != nil {
 		return false, fmt.Errorf("getSequencesBundles: %v", err)
 	}
@@ -445,8 +448,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	return nil
 }
 
-func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64) ([]Batch, bool, error) {
-	bundlesAtATime := 4
+func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64, nBundle int) ([]Batch, bool, error) {
 	// TODO: handle more bundles better than this
 	keyCond := expression.Key("Logname").Equal(expression.Value(s.path)).And(expression.Key("Idx").GreaterThanEqual(expression.Value(startBundleIdx)))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
@@ -460,7 +462,7 @@ func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64
 		ExpressionAttributeNames:  expr.Names(),
 		TableName:                 aws.String(entriesTable),
 		ConsistentRead:            aws.Bool(true),
-		Limit:                     aws.Int32(int32(bundlesAtATime) + 1),
+		Limit:                     aws.Int32(int32(nBundle) + 1),
 	}
 
 	output, err := s.ddb.Query(ctx, input)
@@ -473,15 +475,15 @@ func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64
 		return batches, false, nil
 	}
 	n := len(output.Items)
-	if n > bundlesAtATime {
-		n = bundlesAtATime
+	if n > nBundle {
+		n = nBundle
 	}
 	if err := attributevalue.UnmarshalListOfMaps(output.Items[:n], &batches); err != nil {
 		return nil, false, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
 
 	// return the actual start index!
-	return batches, (len(output.Items) > bundlesAtATime), nil
+	return batches, (len(output.Items) > nBundle), nil
 }
 
 func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte, error) {

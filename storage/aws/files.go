@@ -265,7 +265,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	n := time.Now()
 	// Double locking:
 	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
-	// - The Dynamodb `LockCP()` ensures that distinct tasks are serialised.
+	// - The Dynamodb `LockAWS()` ensures that distinct tasks are serialised.
 	s.ddbMutex.Lock()
 	if err := s.lockAWS(lockDDBTable); err != nil {
 		panic(err)

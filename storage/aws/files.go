@@ -329,11 +329,11 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	}
 
 	// TODO(phboneff): add checks here
-	//currCP, err := s.ReadCheckpoint()
-	//if err != nil {
-	//	klog.Fatalf("Couldn't load checkpoint: %v", err)
-	//}
-	//_, _, _ := s.curTree(currCP)
+	currCP, err := s.ReadCheckpoint()
+	if err != nil {
+		klog.Fatalf("Couldn't load checkpoint: %v", err)
+	}
+	size, _, _ := s.curTree(currCP)
 
 	nextIdx, err := s.ReadSequencedIndex()
 	if err != nil {
@@ -351,7 +351,7 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 
 	// TODO(phboneff): careful, need to make sure that two nodes don't override the same bundle. This is prob
 	// done by reading the bundle form the table at all times, and not from this function
-	bundleIndex, entriesInBundle := nextIdx/uint64(s.params.EntryBundleSize), nextIdx%uint64(s.params.EntryBundleSize)
+	bundleIndex, entriesInBundle := size/uint64(s.params.EntryBundleSize), size%uint64(s.params.EntryBundleSize)
 	bundle := &bytes.Buffer{}
 	if entriesInBundle > 0 {
 		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.

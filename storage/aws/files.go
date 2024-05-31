@@ -383,8 +383,6 @@ func (s *Storage) sequenceEntries(ctx context.Context, entries [][]byte, firstId
 	bundle := [][]byte{}
 	if entriesInBundle > 0 {
 		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
-		// TODO: maybe store partial indexes
-		// TODO: doens't work becaue of duplicates...
 		part, err := s.getSequencedBundle(ctx, bundleIndex)
 		// TODO: check that this is not a "not found error"
 		if err != nil {
@@ -442,7 +440,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	// TODO(phboneff): fix context
 	_, err = s.ddb.PutItem(ctx, input)
 	if err != nil {
-		return err
+		klog.Fatalf("Couldn't write bundle: %v", err)
 	}
 
 	return nil

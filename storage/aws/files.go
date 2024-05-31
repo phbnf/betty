@@ -311,8 +311,16 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	klog.V(1).Infof("took %v to place an integration lock", time.Since(t))
 	t = time.Now()
 
+	currCP, err := s.ReadCheckpoint()
+	if err != nil {
+		klog.Fatalf("Couldn't load checkpoint: %v", err)
+	}
+	size, _, _ := s.curTree(currCP)
+	klog.V(1).Infof("took %v to read the checkpoint to integrate to", time.Since(t))
+	t = time.Now()
+
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
-	batches, more, err := s.getSequencedBundles(ctx)
+	batches, more, err := s.getSequencedBundles(ctx, size/uint64(s.params.EntryBundleSize))
 	if err != nil {
 		return false, fmt.Errorf("getSequencesBundles: %v", err)
 	}
@@ -323,14 +331,6 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	klog.V(1).Infof("took %v to read sequences bundles", time.Since(t))
 	t = time.Now()
 	firstBundleIndex := batches[0].Idx
-
-	currCP, err := s.ReadCheckpoint()
-	if err != nil {
-		klog.Fatalf("Couldn't load checkpoint: %v", err)
-	}
-	size, _, _ := s.curTree(currCP)
-	klog.V(1).Infof("took %v to read the checkpoint to integrate to", time.Since(t))
-	t = time.Now()
 
 	entries := make([][]byte, 0)
 	for _, b := range batches {
@@ -448,10 +448,10 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	return nil
 }
 
-func (s *Storage) getSequencedBundles(ctx context.Context) ([]Batch, bool, error) {
+func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64) ([]Batch, bool, error) {
 	batchAtATime := 4
 	// TODO: handle more bundles better than this
-	keyCond := expression.Key("Logname").Equal(expression.Value(s.path))
+	keyCond := expression.Key("Logname").Equal(expression.Value(s.path)).And(expression.Key("Idx").GreaterThanEqual(expression.Value(startBundleIdx)))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
 	if err != nil {
 		klog.Fatalf("Cannot create dynamodb condition: %v", err)

@@ -345,6 +345,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 		data := []byte(strings.Join(b.Value, "\n"))
 		s.WriteFile(filepath.Join(bd, bf), data)
 		for i, e := range b.Value {
+			// Only start integrating entries past the current checkpoint
 			if b.Idx*(uint64(s.params.EntryBundleSize))+uint64(i) >= size {
 				entries = append(entries, []byte(e))
 			}

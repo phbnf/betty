@@ -110,13 +110,13 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 				return
 			case <-t.C:
 				// TODO: handle errors
-				_, more, err := r.Integrate(ctx)
+				more, err := r.Integrate(ctx)
 				if err != nil {
 					klog.V(2).Infof("r.Integrate(): %v", err)
 				}
 				for {
 					if more {
-						_, more, err = r.Integrate(ctx)
+						more, err = r.Integrate(ctx)
 						if err != nil {
 							klog.V(2).Infof("r.Integrate(): %v", err)
 						}
@@ -239,25 +239,24 @@ func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byt
 // sequenced entries are contiguous from the zeroth entry (i.e left-hand dense).
 // We try to minimise the number of partially complete entry bundles by writing entries in chunks rather
 // than one-by-one.
-func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Batch) (uint64, error) {
+func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Batch) error {
 	_, err := s.sequenceBatch(ctx, batch)
 	if err != nil {
-		return 0, fmt.Errorf("s.sequenceBatch(): %v", err)
+		return fmt.Errorf("s.sequenceBatch(): %v", err)
 	}
 
 	more := true
-	var size uint64
 	for {
 		if more {
-			size, more, err = s.Integrate(ctx)
+			more, err = s.Integrate(ctx)
 			if err != nil {
-				return 0, fmt.Errorf("s.Integrate(): %v", err)
+				return fmt.Errorf("s.Integrate(): %v", err)
 			}
 		} else {
 			break
 		}
 	}
-	return size, err
+	return err
 }
 
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
@@ -296,7 +295,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	return seq, nil
 }
 
-func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
+func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	t := time.Now()
 	s.Lock()
 	if err := s.lockAWS(lockS3Table); err != nil {
@@ -315,11 +314,11 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
 	batches, more, err := s.getSequencedBundles(ctx)
 	if err != nil {
-		return 0, false, fmt.Errorf("getSequencesBundles: %v", err)
+		return false, fmt.Errorf("getSequencesBundles: %v", err)
 	}
 	if len(batches) == 0 {
 		klog.V(2).Info("nothing to integrate")
-		return 0, false, nil
+		return false, nil
 	}
 	klog.V(1).Infof("took %v to read sequences bundles", time.Since(t))
 	t = time.Now()
@@ -352,22 +351,23 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	klog.V(1).Infof("took %v to serialize the entries to integrate", time.Since(t))
 	t = time.Now()
 
-	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
 	err = s.doIntegrate(ctx, size, entries)
 	if err != nil {
-		return 0, false, fmt.Errorf("doIntegrate: %v", err)
+		return false, fmt.Errorf("doIntegrate: %v", err)
 	}
 	klog.V(1).Infof("took %v to integrate entries", time.Since(t))
 	t = time.Now()
 
-	klog.V(1).Infof("took %v to integrate %d entries starting at %d", time.Since(t), len(entries), size)
-
-	// Then delete the bundles that we will never need to integrate again
 	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index
-	//return firstIdx, more, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
+	// Then delete the bundles that we will never need to integrate again
 	firstEntryIndex := firstBundleIndex * uint64(s.params.EntryBundleSize)
 	fullBundles := (firstEntryIndex + uint64(len(entries))) / uint64(s.params.EntryBundleSize)
-	return nextIdx, more, s.deleteSequencedBundles(ctx, firstBundleIndex, fullBundles)
+	if err := s.deleteSequencedBundles(ctx, firstBundleIndex, fullBundles); err != nil {
+		return false, fmt.Errorf("deleteSequencedBundles(): err")
+	}
+	klog.V(1).Infof("took %v to delete old bundles", time.Since(t))
+
+	return more, nil
 }
 
 type Batch struct {

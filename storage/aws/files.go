@@ -457,19 +457,30 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 		Value:   entries,
 	}
 
-	vals, err := attributevalue.Marshal(item.Value)
+	vals, err := attributevalue.MarshalList(item.Value)
 	if err != nil {
 		klog.Fatalf("Got error marshalling batch entries: %s", err)
 	}
-	av, err := attributevalue.MarshalMap(item)
-	av["Value"] = vals
-	fmt.Println(av)
+	itemm := map[string]dynamodbtypes.AttributeValue{
+		"Logname": &dynamodbtypes.AttributeValueMemberS{
+			Value: s.path,
+		},
+		"Idx": &dynamodbtypes.AttributeValueMemberN{
+			Value: fmt.Sprintf("%d", bundleIdx),
+		},
+		"Value": &dynamodbtypes.AttributeValueMemberL{
+			Value: vals,
+		},
+	}
+	//av, err := attributevalue.MarshalMap(item)
+	//av["Value"] = vals
+	//fmt.Println(av)
 	if err != nil {
 		klog.Fatalf("Got error marshalling new movie item: %s", err)
 	}
 
 	input := &dynamodb.PutItemInput{
-		Item:      av,
+		Item:      itemm,
 		TableName: aws.String(entriesTable),
 	}
 

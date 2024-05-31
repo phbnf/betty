@@ -115,7 +115,7 @@ func main() {
 	})
 
 	http.HandleFunc("GET /checkpoint", func(w http.ResponseWriter, r *http.Request) {
-		cp, err := s.ReadExportCheckpoint()
+		cp, err := s.ReadCheckpoint()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(fmt.Sprintf("Failed to read checkpoint: %v", err)))

@@ -67,7 +67,7 @@ type NewTreeFunc func(size uint64, root []byte) ([]byte, error)
 // CurrentTree is the signature of a function which retrieves the current integrated tree size and root hash.
 type CurrentTreeFunc func([]byte) (uint64, []byte, error)
 
-// New creates a new S3 storage.
+// New creates a new S3 and DDB Storage
 func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string) *Storage {
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {

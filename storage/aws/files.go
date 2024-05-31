@@ -163,7 +163,7 @@ func (s *Storage) lockAWS(table string) error {
 	if err != nil {
 		var cdte *dynamodbtypes.ConditionalCheckFailedException
 		if errors.As(err, &cdte) {
-			// TODO(phboneff): better retry
+			// TODO: stop retrying after some point
 			s.lockAWS(table)
 		} else {
 			klog.Fatalf("Got error calling PutItem: %s", err)
@@ -214,16 +214,6 @@ func (s *Storage) unlockAWS(table string) error {
 // Returns the sequence number assigned to the first entry in the batch, or an error.
 func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
 	return s.pool.Add(b)
-}
-
-// GetEntryBundle retrieves the Nth entries bundle.
-// If size is != the max size of the bundle, a partial bundle is returned.
-func (s *Storage) GetEntryBundle(ctx context.Context, index, size uint64) ([]byte, error) {
-	bd, bf := layout.SeqPath(s.path, index)
-	if size < uint64(s.params.EntryBundleSize) {
-		bf = fmt.Sprintf("%s.%d", bf, size)
-	}
-	return s.ReadFile(filepath.Join(bd, bf))
 }
 
 // sequenceBatchAndIntegrate writes the entries from the provided batch into the entry bundle files of the log.

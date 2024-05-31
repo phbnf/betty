@@ -124,6 +124,26 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 	return r
 }
 
+func (s *Storage) IntegrationLoop(ctx context.Context, frequency time.Duration) {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			more := true
+			for more {
+				var err error
+				more, err = s.Integrate(ctx)
+				if err != nil {
+					klog.V(1).Infof("r.Integrate(): %v", err)
+				}
+			}
+		}
+	}
+}
+
 type Lock struct {
 	Logname string `json:"logname"`
 	ID      int64  `json:"id"`
@@ -426,7 +446,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 }
 
 func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64) ([]Batch, bool, error) {
-	batchAtATime := 4
+	bundlesAtATime := 4
 	// TODO: handle more bundles better than this
 	keyCond := expression.Key("Logname").Equal(expression.Value(s.path)).And(expression.Key("Idx").GreaterThanEqual(expression.Value(startBundleIdx)))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
@@ -440,7 +460,7 @@ func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64
 		ExpressionAttributeNames:  expr.Names(),
 		TableName:                 aws.String(entriesTable),
 		ConsistentRead:            aws.Bool(true),
-		Limit:                     aws.Int32(int32(batchAtATime) + 1),
+		Limit:                     aws.Int32(int32(bundlesAtATime) + 1),
 	}
 
 	output, err := s.ddb.Query(ctx, input)
@@ -453,15 +473,15 @@ func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64
 		return batches, false, nil
 	}
 	n := len(output.Items)
-	if n > batchAtATime {
-		n = batchAtATime
+	if n > bundlesAtATime {
+		n = bundlesAtATime
 	}
 	if err := attributevalue.UnmarshalListOfMaps(output.Items[:n], &batches); err != nil {
 		return nil, false, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
 
 	// return the actual start index!
-	return batches, (len(output.Items) > batchAtATime), nil
+	return batches, (len(output.Items) > bundlesAtATime), nil
 }
 
 func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte, error) {

@@ -312,7 +312,7 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	t = time.Now()
 
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
-	entriesString, _, more, err := s.getSequencedBundles(ctx)
+	entriesString, firstBundleIndex, more, err := s.getSequencedBundles(ctx)
 	entries := make([][]byte, len(entriesString))
 	for i, e := range entriesString {
 		entries[i] = []byte(e)
@@ -350,11 +350,13 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 
 	klog.V(2).Infof("Integrated ")
 	klog.V(1).Infof("took %v to integrate %d entries starting at %d", time.Since(t), len(entries), nextIdx)
-	// Then delete the entries that we have just integrated
+
+	// Then delete the bundles that we will never need to integrate again
 	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index
 	//return firstIdx, more, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
-	firstBundleIndex := uint64(s.params.EntryBundleSize)
-	return nextIdx, more, s.deleteSequencedEntries(ctx, firstBundleIndex, bundleIndex-firstBundleIndex+1)
+	firstEntryIndex := firstBundleIndex * uint64(s.params.EntryBundleSize)
+	fullBundles := (firstEntryIndex + uint64(len(entries))) / uint64(s.params.EntryBundleSize)
+	return nextIdx, more, s.deleteSequencedBundles(ctx, firstBundleIndex, fullBundles)
 }
 
 type Batch struct {
@@ -520,7 +522,7 @@ func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte,
 	return ret, nil
 }
 
-func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64) error {
+func (s *Storage) deleteSequencedBundles(ctx context.Context, start, len uint64) error {
 	//TODO: batching. But it only allows 25 entries at a time
 	for i := start; i < start+len; i++ {
 		// TODO(phboneff): see if I can bundle everything in on transation
@@ -534,7 +536,7 @@ func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64)
 
 		av, err := attributevalue.MarshalMap(item)
 		if err != nil {
-			klog.Fatalf("Got error marshalling key to delete entries: %s", err)
+			klog.Fatalf("Got error marshalling key to delete bundles: %s", err)
 		}
 
 		input := &dynamodb.DeleteItemInput{
@@ -542,13 +544,12 @@ func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64)
 			TableName: aws.String(entriesTable),
 		}
 
-		// TODO(phboneff): fix context
-		_, err = s.ddb.DeleteItem(context.TODO(), input)
+		_, err = s.ddb.DeleteItem(ctx, input)
 		if err != nil {
-			return fmt.Errorf("could not delete entry %d: %v", i, err)
+			return fmt.Errorf("could not delete bundle %d: %v", i, err)
 		}
 	}
-	klog.V(2).Infof("successfully removed entries %d to %d from the sequenced table", start, start+len)
+	klog.V(2).Infof("successfully removed bundles %d to %d from the sequenced table", start, start+len)
 	return nil
 }
 

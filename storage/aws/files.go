@@ -15,6 +15,7 @@ import (
 	"io"
 	"math/rand"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -312,34 +313,43 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	t = time.Now()
 
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
-	entriesString, firstBundleIndex, more, err := s.getSequencedBundles(ctx)
-	entries := make([][]byte, len(entriesString))
-	for i, e := range entriesString {
-		entries[i] = []byte(e)
-	}
+	batches, more, err := s.getSequencedBundles(ctx)
 	if err != nil {
-		return 0, false, fmt.Errorf("getStagedEntries: %v", err)
+		return 0, false, fmt.Errorf("getSequencesBundles: %v", err)
 	}
-	klog.V(1).Infof("took %v to read entries to integrate", time.Since(t))
-	t = time.Now()
-
-	if len(entries) == 0 {
+	if len(batches) == 0 {
 		klog.V(2).Info("nothing to integrate")
 		return 0, false, nil
 	}
+	klog.V(1).Infof("took %v to read sequences bundles", time.Since(t))
+	t = time.Now()
+	firstBundleIndex := batches[0].Idx
 
-	// TODO(phboneff): add checks here
 	currCP, err := s.ReadCheckpoint()
 	if err != nil {
 		klog.Fatalf("Couldn't load checkpoint: %v", err)
 	}
 	size, _, _ := s.curTree(currCP)
-
-	nextIdx, err := s.ReadSequencedIndex()
-	if err != nil {
-		klog.Fatalf("couldn't load next sequenced index: %v", err)
-	}
 	klog.V(1).Infof("took %v to read the checkpoint to integrate to", time.Since(t))
+	t = time.Now()
+
+	entries := make([][]byte, 0)
+	for _, b := range batches {
+		// Write bundles to S3
+		bd, bf := layout.SeqPath(s.path, b.Idx)
+		if len(b.Value) < s.params.EntryBundleSize {
+			bf = fmt.Sprintf("%s.%d", bf, len(b.Value))
+		}
+		// TODO: do something more eleguqnt than this
+		data := []byte(strings.Join(b.Value, "\n"))
+		s.WriteFile(filepath.Join(bd, bf), data)
+		for i, e := range b.Value {
+			if b.Idx*(uint64(s.params.EntryBundleSize))+uint64(i) >= size {
+				entries = append(entries, []byte(e))
+			}
+		}
+	}
+	klog.V(1).Infof("took %v to serialize the entries to integrate", time.Since(t))
 	t = time.Now()
 
 	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
@@ -347,9 +357,10 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	if err != nil {
 		return 0, false, fmt.Errorf("doIntegrate: %v", err)
 	}
+	klog.V(1).Infof("took %v to integrate entries", time.Since(t))
+	t = time.Now()
 
-	klog.V(2).Infof("Integrated ")
-	klog.V(1).Infof("took %v to integrate %d entries starting at %d", time.Since(t), len(entries), nextIdx)
+	klog.V(1).Infof("took %v to integrate %d entries starting at %d", time.Since(t), len(entries), size)
 
 	// Then delete the bundles that we will never need to integrate again
 	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index
@@ -387,7 +398,6 @@ func (s *Storage) sequenceEntries(ctx context.Context, entries [][]byte, firstId
 		entriesInBundle++
 		if entriesInBundle == uint64(s.params.EntryBundleSize) {
 			//  This bundle is full, so we need to write it out...
-			//  bd, bf := layout.SeqPath(s.path, bundleIndex)
 			if err := s.stageBundle(ctx, bundle, bundleIndex); err != nil {
 				return err
 			}
@@ -437,7 +447,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	return nil
 }
 
-func (s *Storage) getSequencedBundles(ctx context.Context) ([]Batch, uint64, bool, error) {
+func (s *Storage) getSequencedBundles(ctx context.Context) ([]Batch, bool, error) {
 	batchAtATime := 4
 	// TODO: handle more bundles better than this
 	keyCond := expression.Key("Logname").Equal(expression.Value(s.path))
@@ -458,26 +468,22 @@ func (s *Storage) getSequencedBundles(ctx context.Context) ([]Batch, uint64, boo
 	output, err := s.ddb.Query(ctx, input)
 	klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)
 	if err != nil {
-		return nil, 0, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
+		return nil, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
-	var start uint64
 	batches := []Batch{}
 	if len(output.Items) == 0 {
-		return batches, start, false, nil
+		return batches, false, nil
 	}
 	n := len(output.Items)
 	if n > batchAtATime {
 		n = batchAtATime
 	}
 	if err := attributevalue.UnmarshalListOfMaps(output.Items[:n], &batches); err != nil {
-		return nil, 0, false, fmt.Errorf("can't unmarshall entries: %v", err)
-	}
-	if len(batches) >= batchAtATime {
-		start = batches[0].Idx
+		return nil, false, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
 
 	// return the actual start index!
-	return batches, start, (len(output.Items) > batchAtATime), nil
+	return batches, (len(output.Items) > batchAtATime), nil
 }
 
 func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte, error) {

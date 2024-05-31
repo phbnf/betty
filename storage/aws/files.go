@@ -457,8 +457,11 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	//	Value:   entries,
 	//}
 	fmt.Println(entries)
+	b := writer.Batch{
+		Entries: entries,
+	}
 
-	vals, err := attributevalue.MarshalList(entries[0])
+	vals, err := attributevalue.MarshalList(b)
 	if err != nil {
 		klog.Fatalf("Got error marshalling batch entries: %s", err)
 	}

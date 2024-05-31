@@ -437,7 +437,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	return nil
 }
 
-func (s *Storage) getSequencedBundles(ctx context.Context) ([]string, uint64, bool, error) {
+func (s *Storage) getSequencedBundles(ctx context.Context) ([]Batch, uint64, bool, error) {
 	batchAtATime := 4
 	// TODO: handle more bundles better than this
 	keyCond := expression.Key("Logname").Equal(expression.Value(s.path))
@@ -460,11 +460,10 @@ func (s *Storage) getSequencedBundles(ctx context.Context) ([]string, uint64, bo
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
-	var ret []string
 	var start uint64
 	batches := []Batch{}
 	if len(output.Items) == 0 {
-		return ret, start, false, nil
+		return batches, start, false, nil
 	}
 	n := len(output.Items)
 	if n > batchAtATime {
@@ -473,17 +472,12 @@ func (s *Storage) getSequencedBundles(ctx context.Context) ([]string, uint64, bo
 	if err := attributevalue.UnmarshalListOfMaps(output.Items[:n], &batches); err != nil {
 		return nil, 0, false, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
-	fmt.Println(batches)
-	for _, b := range batches {
-		ret = append(ret, b.Value...)
-		// TODO(phboneff): handle non continous batches, even though that should never happen
-	}
 	if len(batches) >= batchAtATime {
 		start = batches[0].Idx
 	}
 
 	// return the actual start index!
-	return ret, start, (len(output.Items) > batchAtATime), nil
+	return batches, start, (len(output.Items) > batchAtATime), nil
 }
 
 func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte, error) {

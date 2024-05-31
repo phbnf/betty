@@ -351,7 +351,7 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 
 	// TODO(phboneff): careful, need to make sure that two nodes don't override the same bundle. This is prob
 	// done by reading the bundle form the table at all times, and not from this function
-	bundleIndex, entriesInBundle := size/uint64(s.params.EntryBundleSize), size%uint64(s.params.EntryBundleSize)
+	bundleIndex, entriesInBundle := size/uint64(s.params.EntryBundleSize), nextIdx%uint64(s.params.EntryBundleSize)
 	bundle := &bytes.Buffer{}
 	if entriesInBundle > 0 {
 		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
@@ -391,7 +391,7 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	t = time.Now()
 
 	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
-	err = s.doIntegrate(ctx, nextIdx, entries)
+	err = s.doIntegrate(ctx, size, entries)
 	if err != nil {
 		return 0, false, fmt.Errorf("doIntegrate: %v", err)
 	}

@@ -398,6 +398,7 @@ func (s *Storage) sequenceEntries(ctx context.Context, entries [][]byte, firstId
 	if entriesInBundle > 0 {
 		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
 		// TODO: maybe store partial indexes
+		// TODO: doens't work becaue of duplicates...
 		part, err := s.getSequencedBundle(ctx, bundleIndex)
 		if err != nil {
 			return err
@@ -439,7 +440,13 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 		Value:   entries,
 	}
 
+	vals, err := attributevalue.Marshal(item.Value)
+	if err != nil {
+		klog.Fatalf("Got error marshalling batch entries: %s", err)
+	}
 	av, err := attributevalue.MarshalMap(item)
+	av["Value"] = vals
+	fmt.Println(av)
 	if err != nil {
 		klog.Fatalf("Got error marshalling new movie item: %s", err)
 	}

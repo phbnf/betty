@@ -356,9 +356,10 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 							Value: s.path,
 						},
 					},
-					ExpressionAttributeValues: expr.Values(),
-					ExpressionAttributeNames:  expr.Names(),
-					TableName:                 aws.String(lockDDBTable),
+					ExpressionAttributeValues:           expr.Values(),
+					ExpressionAttributeNames:            expr.Names(),
+					TableName:                           aws.String(lockDDBTable),
+					ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureAllOld,
 				},
 			},
 			dynamodbtypes.TransactWriteItem{
@@ -403,6 +404,14 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	}
 	_, err = s.ddb.TransactWriteItems(ctx, input)
 	if err != nil {
+		var underlyingError *dynamodbtypes.TransactionCanceledException
+		if errors.As(err, &underlyingError) {
+			var underlyingConditionError *dynamodbtypes.ConditionalCheckFailedException
+			if errors.As(underlyingError, &underlyingConditionError) {
+				klog.V(2).Infof("couldnt' write sequencing transation: %v", underlyingConditionError)
+			}
+			klog.V(2).Infof("ConditionalCheckFailed: %v", underlyingError.CancellationReasons[0])
+		}
 		klog.V(2).Infof("couldnt' write sequencing transation: %v", err)
 	}
 	return seq, nil

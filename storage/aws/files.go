@@ -109,10 +109,16 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 				return
 			case <-t.C:
 				// TODO: handle errors
-				_, more, _ := r.Integrate(ctx)
+				_, more, err := r.Integrate(ctx)
+				if err != nil {
+					klog.V(2).Infof("r.Integrate(): %v", err)
+				}
 				for {
 					if more {
-						_, more, _ = r.Integrate(ctx)
+						_, more, err = r.Integrate(ctx)
+						if err != nil {
+							klog.V(2).Infof("r.Integrate(): %v", err)
+						}
 					} else {
 						break
 					}
@@ -305,7 +311,8 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	klog.V(1).Infof("took %v to place an integration lock", time.Since(t))
 	t = time.Now()
 
-	entries, firstIdx, more, err := s.getSequencedBundles(ctx)
+	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
+	entries, _, more, err := s.getSequencedBundles(ctx)
 	if err != nil {
 		return 0, false, fmt.Errorf("getStagedEntries: %v", err)
 	}
@@ -317,21 +324,30 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 		return 0, false, nil
 	}
 
-	currCP, err := s.ReadCheckpoint()
-	if err != nil {
-		klog.Fatalf("Couldn't load checkpoint:  %v", err)
-	}
-	size, _, _ := s.curTree(currCP)
+	// TODO(phboneff): add checks here
+	//currCP, err := s.ReadCheckpoint()
+	//if err != nil {
+	//	klog.Fatalf("Couldn't load checkpoint: %v", err)
+	//}
+	//_, _, _ := s.curTree(currCP)
 
-	if size != firstIdx {
-		return 0, false, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the current checkpoint size: %d", firstIdx, size)
+	nextIdx, err := s.ReadSequencedIndex()
+	if err != nil {
+		klog.Fatalf("couldn't load next sequenced index: %v", err)
 	}
+	//if size != nextIdx {
+	//	return 0, false, fmt.Errorf("the next slot to index entries %d doesn't match with the current checkpoint size: %d", nextIdx, size)
+	//}
+	// TODO(phboneff): add a check to make sure that the first index also matches with the firstIndx somehow
+	//if size != nextIdx {
+	//	return 0, false, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the current checkpoint size: %d", firstIdx, size)
+	//}
 	klog.V(1).Infof("took %v to read the checkpoint to integrate to", time.Since(t))
 	t = time.Now()
 
 	// TODO(phboneff): careful, need to make sure that two nodes don't override the same bundle. This is prob
 	// done by reading the bundle form the table at all times, and not from this function
-	bundleIndex, entriesInBundle := firstIdx/uint64(s.params.EntryBundleSize), firstIdx%uint64(s.params.EntryBundleSize)
+	bundleIndex, entriesInBundle := nextIdx/uint64(s.params.EntryBundleSize), nextIdx%uint64(s.params.EntryBundleSize)
 	bundle := &bytes.Buffer{}
 	if entriesInBundle > 0 {
 		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
@@ -371,18 +387,18 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	t = time.Now()
 
 	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
-	err = s.doIntegrate(ctx, firstIdx, entries)
+	err = s.doIntegrate(ctx, bundleIdx, entries)
 	if err != nil {
 		return 0, false, fmt.Errorf("doIntegrate: %v", err)
 	}
 
 	klog.V(2).Infof("Integrated ")
-	klog.V(1).Infof("took %v to integrate %d entries starting at %d", time.Since(t), len(entries), firstIdx)
+	klog.V(1).Infof("took %v to integrate %d entries starting at %d", time.Since(t), len(entries), bundleIdx)
 	// Then delete the entries that we have just integrated
 	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index
 	//return firstIdx, more, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
 	firstBundleIndex := uint64(s.params.EntryBundleSize)
-	return firstIdx, more, s.deleteSequencedEntries(ctx, firstBundleIndex, bundleIndex-firstBundleIndex+1)
+	return bundleIdx, more, s.deleteSequencedEntries(ctx, firstBundleIndex, bundleIndex-firstBundleIndex+1)
 }
 
 type Batch struct {
@@ -400,6 +416,7 @@ func (s *Storage) sequenceEntries(ctx context.Context, entries [][]byte, firstId
 		// TODO: maybe store partial indexes
 		// TODO: doens't work becaue of duplicates...
 		part, err := s.getSequencedBundle(ctx, bundleIndex)
+		// TODO: check that this is not a "not found error"
 		if err != nil {
 			return err
 		}
@@ -530,6 +547,7 @@ func (s *Storage) getSequencedBundles(ctx context.Context) ([][]byte, uint64, bo
 	if err := attributevalue.UnmarshalListOfMaps(output.Items[:n], &batches); err != nil {
 		return nil, 0, false, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
+	fmt.Println(batches)
 	for _, b := range batches {
 		ret = append(ret, b.Value...)
 		// TODO(phboneff): handle non continous batches, even though that should never happen

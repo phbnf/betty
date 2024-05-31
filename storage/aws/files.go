@@ -456,6 +456,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 		Idx:     bundleIdx,
 		Value:   entries,
 	}
+	fmt.Println(entries)
 
 	vals, err := attributevalue.MarshalList(item.Value)
 	if err != nil {
@@ -472,6 +473,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 			Value: vals,
 		},
 	}
+	fmt.Println(vals)
 	//av, err := attributevalue.MarshalMap(item)
 	//av["Value"] = vals
 	//fmt.Println(av)

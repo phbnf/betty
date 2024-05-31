@@ -387,18 +387,18 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	t = time.Now()
 
 	// For simplicitly, well in-line the integration of these new entries into the Merkle structure too.
-	err = s.doIntegrate(ctx, bundleIdx, entries)
+	err = s.doIntegrate(ctx, nextIdx, entries)
 	if err != nil {
 		return 0, false, fmt.Errorf("doIntegrate: %v", err)
 	}
 
 	klog.V(2).Infof("Integrated ")
-	klog.V(1).Infof("took %v to integrate %d entries starting at %d", time.Since(t), len(entries), bundleIdx)
+	klog.V(1).Infof("took %v to integrate %d entries starting at %d", time.Since(t), len(entries), nextIdx)
 	// Then delete the entries that we have just integrated
 	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index
 	//return firstIdx, more, s.deleteSequencedEntries(ctx, firstIdx, uint64(len(entries)))
 	firstBundleIndex := uint64(s.params.EntryBundleSize)
-	return bundleIdx, more, s.deleteSequencedEntries(ctx, firstBundleIndex, bundleIndex-firstBundleIndex+1)
+	return nextIdx, more, s.deleteSequencedEntries(ctx, firstBundleIndex, bundleIndex-firstBundleIndex+1)
 }
 
 type Batch struct {

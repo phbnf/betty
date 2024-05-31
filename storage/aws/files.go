@@ -91,7 +91,7 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 		integrateBundleBatchSize: integrateBundleBatchSize,
 	}
 
-	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
+	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatchNoLock)
 
 	currCP, err := r.ReadCheckpoint()
 	if err != nil {
@@ -295,6 +295,118 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	}
 	klog.V(1).Infof("took %v to write the new sequenced index", time.Since(n))
 	return seq, nil
+}
+
+func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (uint64, error) {
+	t := time.Now()
+	seq, err := s.ReadSequencedIndex()
+	if err != nil {
+		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)
+	}
+	klog.V(1).Infof("took %v to read the current sequenced index", time.Since(t))
+
+	// TODO(phboneff): remove this, tis is just to try things out
+	s.ddbMutex.Lock()
+	if err := s.lockAWS(lockDDBTable); err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := s.unlockAWS(lockDDBTable); err != nil {
+			panic(err)
+		}
+		s.ddbMutex.Unlock()
+	}()
+
+	// done by reading the bundle form the table at all times, and not from this function
+	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
+	appendCount := min(uint64(s.params.EntryBundleSize)-entriesInBundle, uint64(len(batch.Entries)))
+	newCount := uint64(len(batch.Entries)) - appendCount
+
+	values := make([]string, appendCount)
+	for i := uint64(0); i < appendCount; i++ {
+		values[i] = string(batch.Entries[i])
+	}
+	entries, err := attributevalue.MarshalList(values)
+	if err != nil {
+		return 0, fmt.Errorf("error marshaling entries list: %v")
+	}
+
+	values_next := make([]string, newCount)
+	for i := 0; uint64(i) < newCount; i++ {
+		values_next[i] = string(batch.Entries[i+int(appendCount)])
+	}
+	entries_next, err := attributevalue.MarshalList(values_next)
+	if err != nil {
+		return 0, fmt.Errorf("error marshaling entries list: %v", err)
+	}
+
+	keyCond := expression.Key("Logname").Equal(expression.Value(s.path)).And(expression.Key("Idx").Equal(expression.Value(seq)))
+	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
+	if err != nil {
+		klog.Fatalf("Cannot create dynamodb condition: %v", err)
+	}
+
+	input := &dynamodb.TransactWriteItemsInput{
+		TransactItems: []dynamodbtypes.TransactWriteItem{
+			dynamodbtypes.TransactWriteItem{
+				ConditionCheck: &dynamodbtypes.ConditionCheck{
+					ConditionExpression: expr.KeyCondition(),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"Logname": &dynamodbtypes.AttributeValueMemberS{
+							Value: s.path,
+						},
+					},
+					ExpressionAttributeValues: expr.Values(),
+					ExpressionAttributeNames:  expr.Names(),
+					TableName:                 aws.String(lockDDBTable),
+				},
+			},
+			dynamodbtypes.TransactWriteItem{
+				Update: &dynamodbtypes.Update{
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"Logname": &dynamodbtypes.AttributeValueMemberS{
+							Value: s.path,
+						},
+						"Idx": &dynamodbtypes.AttributeValueMemberN{
+							Value: string(bundleIndex),
+						},
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":entries": &dynamodbtypes.AttributeValueMemberL{
+							Value: entries,
+						},
+						":empty_list": &dynamodbtypes.AttributeValueMemberL{
+							Value: []dynamodbtypes.AttributeValue{},
+						},
+					},
+					UpdateExpression: aws.String("SET Value = list_apend(if_not_exists(Value, :empty_list), :entries)"),
+					TableName:        aws.String(entriesTable),
+				},
+			},
+			dynamodbtypes.TransactWriteItem{
+				Put: &dynamodbtypes.Put{
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"Logname": &dynamodbtypes.AttributeValueMemberS{
+							Value: s.path,
+						},
+						"Idx": &dynamodbtypes.AttributeValueMemberN{
+							Value: string(bundleIndex + 1),
+						},
+						"Value": &dynamodbtypes.AttributeValueMemberL{
+							Value: entries_next,
+						},
+					},
+					TableName: aws.String(entriesTable),
+				},
+			},
+		},
+	}
+	_, err = s.ddb.TransactWriteItems(ctx, input)
+	if err != nil {
+		klog.V(2).Infof("couldnt' write sequencing transation: %v", err)
+	}
+	return seq, nil
+
 }
 
 func (s *Storage) Integrate(ctx context.Context) (bool, error) {

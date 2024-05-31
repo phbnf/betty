@@ -368,7 +368,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 							Value: s.path,
 						},
 						"Idx": &dynamodbtypes.AttributeValueMemberN{
-							Value: string(bundleIndex),
+							Value: fmt.Sprintf("%d", bundleIndex),
 						},
 					},
 					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
@@ -390,7 +390,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 							Value: s.path,
 						},
 						"Idx": &dynamodbtypes.AttributeValueMemberN{
-							Value: string(bundleIndex + 1),
+							Value: fmt.Sprintf("%d", (bundleIndex + 1)),
 						},
 						"Entries": &dynamodbtypes.AttributeValueMemberL{
 							Value: entries_next,

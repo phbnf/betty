@@ -110,18 +110,11 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 				return
 			case <-t.C:
 				// TODO: handle errors
-				more, err := r.Integrate(ctx)
-				if err != nil {
-					klog.V(2).Infof("r.Integrate(): %v", err)
-				}
-				for {
-					if more {
-						more, err = r.Integrate(ctx)
-						if err != nil {
-							klog.V(2).Infof("r.Integrate(): %v", err)
-						}
-					} else {
-						break
+				more := true
+				for more {
+					more, err = r.Integrate(ctx)
+					if err != nil {
+						klog.V(1).Infof("r.Integrate(): %v", err)
 					}
 				}
 			}

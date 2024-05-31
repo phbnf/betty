@@ -35,8 +35,6 @@ type IntegrateStorage interface {
 
 	// StoreTile stores the tile at the given level & index.
 	StoreTile(ctx context.Context, level, index uint64, tile *api.Tile) error
-
-	GetEntryBundle(ctx context.Context, index uint64, size uint64) ([]byte, error)
 }
 
 var (

@@ -312,7 +312,11 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	t = time.Now()
 
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
-	entries, _, more, err := s.getSequencedBundles(ctx)
+	entriesString, _, more, err := s.getSequencedBundles(ctx)
+	entries := make([][]byte, len(entriesString))
+	for i, e := range entriesString {
+		entries[i] = []byte(e)
+	}
 	if err != nil {
 		return 0, false, fmt.Errorf("getStagedEntries: %v", err)
 	}
@@ -404,7 +408,7 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 type Batch struct {
 	Logname string
 	Idx     uint64
-	Value   [][]byte
+	Value   []string
 }
 
 func (s *Storage) sequenceEntries(ctx context.Context, entries [][]byte, firstIdx uint64) error {
@@ -456,37 +460,46 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	//	Idx:     bundleIdx,
 	//	Value:   entries,
 	//}
-	fmt.Println(entries)
-	b := writer.Batch{
-		Entries: entries,
+	value := make([]string, len(entries))
+	for i, e := range entries {
+		value[i] = string(e)
 	}
+	item := Batch{
+		Logname: s.path,
+		Idx:     bundleIdx,
+		Value:   value,
+	}
+	//fmt.println(entries)
+	//b := writer.Batch{
+	//	Entries: entries,
+	//}
 
-	vals, err := attributevalue.MarshalList(b)
-	if err != nil {
-		klog.Fatalf("Got error marshalling batch entries: %s", err)
-	}
-	itemm := map[string]dynamodbtypes.AttributeValue{
-		"Logname": &dynamodbtypes.AttributeValueMemberS{
-			Value: s.path,
-		},
-		"Idx": &dynamodbtypes.AttributeValueMemberN{
-			Value: fmt.Sprintf("%d", bundleIdx),
-		},
-		"Value": &dynamodbtypes.AttributeValueMemberL{
-			Value: vals,
-		},
-	}
-	fmt.Println("VAL")
-	fmt.Println(vals)
-	//av, err := attributevalue.MarshalMap(item)
+	//	vals, err := attributevalue.Marshal(b)
+	//	if err != nil {
+	//		klog.Fatalf("Got error marshalling batch entries: %s", err)
+	//	}
+	//	itemm := map[string]dynamodbtypes.AttributeValue{
+	//		"Logname": &dynamodbtypes.AttributeValueMemberS{
+	//			Value: s.path,
+	//		},
+	//		"Idx": &dynamodbtypes.AttributeValueMemberN{
+	//			Value: fmt.Sprintf("%d", bundleIdx),
+	//		},
+	//		"Value": &dynamodbtypes.AttributeValueMemberL{
+	//			Value: vals,
+	//		},
+	//	}
+	//fmt.Println("VAL")
+	//fmt.Println(vals)
+	av, err := attributevalue.MarshalMap(item)
 	//av["Value"] = vals
-	//fmt.Println(av)
+	fmt.Println(av)
 	if err != nil {
 		klog.Fatalf("Got error marshalling new movie item: %s", err)
 	}
 
 	input := &dynamodb.PutItemInput{
-		Item:      itemm,
+		Item:      av,
 		TableName: aws.String(entriesTable),
 	}
 
@@ -502,10 +515,14 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize uint64) error {
 	// TODO(phboneff): remove this method
 	// TODO(phboneff): see if I can bundle everything in on transation
+	value := make([]string, len(entries))
+	for i, e := range entries {
+		value[i] = string(e)
+	}
 	item := Batch{
 		Logname: s.path,
 		Idx:     startSize,
-		Value:   entries,
+		Value:   value,
 	}
 
 	av, err := attributevalue.MarshalMap(item)
@@ -528,7 +545,7 @@ func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize 
 	return nil
 }
 
-func (s *Storage) getSequencedBundles(ctx context.Context) ([][]byte, uint64, bool, error) {
+func (s *Storage) getSequencedBundles(ctx context.Context) ([]string, uint64, bool, error) {
 	batchAtATime := 4
 	// TODO: handle more bundles better than this
 	keyCond := expression.Key("Logname").Equal(expression.Value(s.path))
@@ -551,7 +568,7 @@ func (s *Storage) getSequencedBundles(ctx context.Context) ([][]byte, uint64, bo
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
-	var ret [][]byte
+	var ret []string
 	var start uint64
 	batches := []Batch{}
 	if len(output.Items) == 0 {
@@ -605,8 +622,12 @@ func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte,
 	if err := attributevalue.UnmarshalMap(output.Item, &val); err != nil {
 		return nil, fmt.Errorf("can't unmarshall sequenced index: %v", err)
 	}
+	ret := make([][]byte, len(val.Value))
+	for i, e := range val.Value {
+		ret[i] = []byte(e)
+	}
 
-	return val.Value, nil
+	return ret, nil
 }
 
 func (s *Storage) deleteSequencedEntries(ctx context.Context, start, len uint64) error {

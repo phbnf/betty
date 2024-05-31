@@ -229,14 +229,10 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 	}
 
 	more := true
-	for {
-		if more {
-			more, err = s.Integrate(ctx)
-			if err != nil {
-				return fmt.Errorf("s.Integrate(): %v", err)
-			}
-		} else {
-			break
+	for more {
+		more, err = s.Integrate(ctx)
+		if err != nil {
+			klog.V(1).Infof("s.Integrate(): %v", err)
 		}
 	}
 	return err

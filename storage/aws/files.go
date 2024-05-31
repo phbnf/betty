@@ -339,13 +339,6 @@ func (s *Storage) Integrate(ctx context.Context) (uint64, bool, error) {
 	if err != nil {
 		klog.Fatalf("couldn't load next sequenced index: %v", err)
 	}
-	//if size != nextIdx {
-	//	return 0, false, fmt.Errorf("the next slot to index entries %d doesn't match with the current checkpoint size: %d", nextIdx, size)
-	//}
-	// TODO(phboneff): add a check to make sure that the first index also matches with the firstIndx somehow
-	//if size != nextIdx {
-	//	return 0, false, fmt.Errorf("the index of the first entry to integrate %d doesn't match with the current checkpoint size: %d", firstIdx, size)
-	//}
 	klog.V(1).Infof("took %v to read the checkpoint to integrate to", time.Since(t))
 	t = time.Now()
 
@@ -454,12 +447,6 @@ func (s *Storage) sequenceEntries(ctx context.Context, entries [][]byte, firstId
 }
 
 func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx uint64) error {
-	// TODO(phboneff): remove this method
-	//item := Batch{
-	//	Logname: s.path,
-	//	Idx:     bundleIdx,
-	//	Value:   entries,
-	//}
 	value := make([]string, len(entries))
 	for i, e := range entries {
 		value[i] = string(e)
@@ -469,30 +456,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 		Idx:     bundleIdx,
 		Value:   value,
 	}
-	//fmt.println(entries)
-	//b := writer.Batch{
-	//	Entries: entries,
-	//}
-
-	//	vals, err := attributevalue.Marshal(b)
-	//	if err != nil {
-	//		klog.Fatalf("Got error marshalling batch entries: %s", err)
-	//	}
-	//	itemm := map[string]dynamodbtypes.AttributeValue{
-	//		"Logname": &dynamodbtypes.AttributeValueMemberS{
-	//			Value: s.path,
-	//		},
-	//		"Idx": &dynamodbtypes.AttributeValueMemberN{
-	//			Value: fmt.Sprintf("%d", bundleIdx),
-	//		},
-	//		"Value": &dynamodbtypes.AttributeValueMemberL{
-	//			Value: vals,
-	//		},
-	//	}
-	//fmt.Println("VAL")
-	//fmt.Println(vals)
 	av, err := attributevalue.MarshalMap(item)
-	//av["Value"] = vals
 	fmt.Println(av)
 	if err != nil {
 		klog.Fatalf("Got error marshalling new movie item: %s", err)
@@ -508,39 +472,6 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	if err != nil {
 		return err
 	}
-
-	return nil
-}
-
-func (s *Storage) stageEntries(ctx context.Context, entries [][]byte, startSize uint64) error {
-	// TODO(phboneff): remove this method
-	// TODO(phboneff): see if I can bundle everything in on transation
-	value := make([]string, len(entries))
-	for i, e := range entries {
-		value[i] = string(e)
-	}
-	item := Batch{
-		Logname: s.path,
-		Idx:     startSize,
-		Value:   value,
-	}
-
-	av, err := attributevalue.MarshalMap(item)
-	if err != nil {
-		klog.Fatalf("Got error marshalling new movie item: %s", err)
-	}
-
-	input := &dynamodb.PutItemInput{
-		Item:      av,
-		TableName: aws.String(entriesTable),
-	}
-
-	// TODO(phboneff): fix context
-	_, err = s.ddb.PutItem(context.TODO(), input)
-	if err != nil {
-		return err
-	}
-	klog.V(2).Infof("Successfully staged entries from index %d to %v", startSize, startSize+uint64(len(entries)))
 
 	return nil
 }

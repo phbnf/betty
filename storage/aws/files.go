@@ -451,14 +451,14 @@ func (s *Storage) sequenceEntries(ctx context.Context, entries [][]byte, firstId
 
 func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx uint64) error {
 	// TODO(phboneff): remove this method
-	item := Batch{
-		Logname: s.path,
-		Idx:     bundleIdx,
-		Value:   entries,
-	}
+	//item := Batch{
+	//	Logname: s.path,
+	//	Idx:     bundleIdx,
+	//	Value:   entries,
+	//}
 	fmt.Println(entries)
 
-	vals, err := attributevalue.MarshalList(item.Value)
+	vals, err := attributevalue.MarshalList(entries)
 	if err != nil {
 		klog.Fatalf("Got error marshalling batch entries: %s", err)
 	}

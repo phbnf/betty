@@ -363,6 +363,19 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 				},
 			},
 			dynamodbtypes.TransactWriteItem{
+				Put: &dynamodbtypes.Put{
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"Logname": &dynamodbtypes.AttributeValueMemberS{
+							Value: s.path,
+						},
+						"Idx": &dynamodbtypes.AttributeValueMemberS{
+							Value: fmt.Sprintf("%d", seq+appendCount+newCount),
+						},
+					},
+					TableName: aws.String(entriesTable),
+				},
+			},
+			dynamodbtypes.TransactWriteItem{
 				Update: &dynamodbtypes.Update{
 					Key: map[string]dynamodbtypes.AttributeValue{
 						"Logname": &dynamodbtypes.AttributeValueMemberS{

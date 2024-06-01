@@ -328,28 +328,8 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		return 0, fmt.Errorf("error marshaling entries list: %v", err)
 	}
 
-	//keyCond := expression.Key("Logname").Equal(expression.Value(s.path)) //.And(expression.Key("Idx").Equal(expression.Value(seq)))
-	//expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
-	//if err != nil {
-	//	klog.Fatalf("Cannot create dynamodb condition: %v", err)
-	//}
-
 	input := &dynamodb.TransactWriteItemsInput{
 		TransactItems: []dynamodbtypes.TransactWriteItem{
-			//			dynamodbtypes.TransactWriteItem{
-			//				ConditionCheck: &dynamodbtypes.ConditionCheck{
-			//					ConditionExpression: expr.KeyCondition(),
-			//					Key: map[string]dynamodbtypes.AttributeValue{
-			//						"Logname": &dynamodbtypes.AttributeValueMemberS{
-			//							Value: s.path,
-			//						},
-			//					},
-			//					ExpressionAttributeValues:           expr.Values(),
-			//					ExpressionAttributeNames:            expr.Names(),
-			//					TableName:                           aws.String(sequencedTable),
-			//					ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureAllOld,
-			//				},
-			//			},
 			dynamodbtypes.TransactWriteItem{
 				Update: &dynamodbtypes.Update{
 					Key: map[string]dynamodbtypes.AttributeValue{
@@ -365,8 +345,6 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 							Value: fmt.Sprintf("%d", seq),
 						},
 					},
-					//"Idx": &dynamodbtypes.AttributeValueMemberN{
-					//},
 					UpdateExpression:    aws.String("SET Idx = Idx + :increment"),
 					ConditionExpression: aws.String("Idx = :seq"),
 					TableName:           aws.String(sequencedTable),
@@ -414,10 +392,6 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	}
 	_, err = s.ddb.TransactWriteItems(ctx, input)
 	if err != nil {
-		//var underlyingError *dynamodbtypes.TransactionCanceledException
-		//if errors.As(err, &underlyingError) {
-		//	//klog.V(2).Infof("ConditionalCheckFailed: %v", *underlyingError.CancellationReasons[0].Message)
-		//}
 		klog.V(2).Infof("couldnt' write sequencing transation: %v", err)
 	}
 	return seq, nil

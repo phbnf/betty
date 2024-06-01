@@ -419,7 +419,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	if err != nil {
 		var underlyingError *dynamodbtypes.TransactionCanceledException
 		if errors.As(err, &underlyingError) {
-			klog.V(2).Infof("ConditionalCheckFailed: %v", *underlyingError.CancellationReasons[0].Message)
+			//klog.V(2).Infof("ConditionalCheckFailed: %v", *underlyingError.CancellationReasons[0].Message)
 		}
 		klog.V(2).Infof("couldnt' write sequencing transation: %v", err)
 	}

@@ -437,6 +437,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 }
 
 func (s *Storage) Integrate(ctx context.Context) (bool, error) {
+	fmt.Println("Integration time!")
 	t := time.Now()
 	s.Lock()
 	if err := s.lockAWS(lockS3Table); err != nil {

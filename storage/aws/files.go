@@ -340,7 +340,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		return 0, fmt.Errorf("error marshaling entries list: %v", err)
 	}
 
-	keyCond := expression.Key("Logname").Equal(expression.Value(s.path)).And(expression.Key("Idx").Equal(expression.Value(seq)))
+	keyCond := expression.Key("Logname").Equal(expression.Value(s.path)) //.And(expression.Key("Idx").Equal(expression.Value(seq)))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
 	if err != nil {
 		klog.Fatalf("Cannot create dynamodb condition: %v", err)

@@ -346,7 +346,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 						},
 					},
 					UpdateExpression:    aws.String("SET Idx = Idx + :increment"),
-					ConditionExpression: aws.String("Idx = :seq"),
+					ConditionExpression: aws.String("Idx = :seq OR attribute_not_exists(Idx)"),
 					TableName:           aws.String(sequencedTable),
 				},
 			},

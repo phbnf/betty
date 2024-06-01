@@ -303,7 +303,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	if err != nil {
 		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)
 	}
-	klog.V(1).Infof("took %v to read the current sequenced index", time.Since(t))
+	klog.V(1).Infof("took %v to read the current sequenced index %d", time.Since(t), seq)
 
 	// TODO(phboneff): remove this, tis is just to try things out
 	s.ddbMutex.Lock()

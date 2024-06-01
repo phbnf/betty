@@ -316,7 +316,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	}
 	entries, err := attributevalue.MarshalList(values)
 	if err != nil {
-		return 0, fmt.Errorf("error marshaling entries list: %v")
+		return 0, fmt.Errorf("error marshaling entries list: %v", err)
 	}
 
 	values_next := make([]string, newCount)

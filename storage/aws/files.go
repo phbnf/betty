@@ -305,18 +305,6 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	}
 	klog.V(1).Infof("took %v to read the current sequenced index %d", time.Since(t), seq)
 
-	// TODO(phboneff): remove this, tis is just to try things out
-	s.ddbMutex.Lock()
-	if err := s.lockAWS(lockDDBTable); err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := s.unlockAWS(lockDDBTable); err != nil {
-			panic(err)
-		}
-		s.ddbMutex.Unlock()
-	}()
-
 	// done by reading the bundle form the table at all times, and not from this function
 	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
 	appendCount := min(uint64(s.params.EntryBundleSize)-entriesInBundle, uint64(len(batch.Entries)))

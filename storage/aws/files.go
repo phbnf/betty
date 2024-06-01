@@ -358,7 +358,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 					},
 					ExpressionAttributeValues:           expr.Values(),
 					ExpressionAttributeNames:            expr.Names(),
-					TableName:                           aws.String(lockDDBTable),
+					TableName:                           aws.String(sequencedTable),
 					ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureAllOld,
 				},
 			},
@@ -372,7 +372,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 							Value: fmt.Sprintf("%d", seq+appendCount+newCount),
 						},
 					},
-					TableName: aws.String(entriesTable),
+					TableName: aws.String(sequencedTable),
 				},
 			},
 			dynamodbtypes.TransactWriteItem{

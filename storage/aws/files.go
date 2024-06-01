@@ -368,7 +368,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 						"Logname": &dynamodbtypes.AttributeValueMemberS{
 							Value: s.path,
 						},
-						"Idx": &dynamodbtypes.AttributeValueMemberS{
+						"Idx": &dynamodbtypes.AttributeValueMemberN{
 							Value: fmt.Sprintf("%d", seq+appendCount+newCount),
 						},
 					},
@@ -417,10 +417,10 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	}
 	_, err = s.ddb.TransactWriteItems(ctx, input)
 	if err != nil {
-		var underlyingError *dynamodbtypes.TransactionCanceledException
-		if errors.As(err, &underlyingError) {
-			//klog.V(2).Infof("ConditionalCheckFailed: %v", *underlyingError.CancellationReasons[0].Message)
-		}
+		//var underlyingError *dynamodbtypes.TransactionCanceledException
+		//if errors.As(err, &underlyingError) {
+		//	//klog.V(2).Infof("ConditionalCheckFailed: %v", *underlyingError.CancellationReasons[0].Message)
+		//}
 		klog.V(2).Infof("couldnt' write sequencing transation: %v", err)
 	}
 	return seq, nil

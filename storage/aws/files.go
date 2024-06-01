@@ -340,39 +340,48 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		return 0, fmt.Errorf("error marshaling entries list: %v", err)
 	}
 
-	keyCond := expression.Key("Logname").Equal(expression.Value(s.path)) //.And(expression.Key("Idx").Equal(expression.Value(seq)))
-	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
-	if err != nil {
-		klog.Fatalf("Cannot create dynamodb condition: %v", err)
-	}
+	//keyCond := expression.Key("Logname").Equal(expression.Value(s.path)) //.And(expression.Key("Idx").Equal(expression.Value(seq)))
+	//expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
+	//if err != nil {
+	//	klog.Fatalf("Cannot create dynamodb condition: %v", err)
+	//}
 
 	input := &dynamodb.TransactWriteItemsInput{
 		TransactItems: []dynamodbtypes.TransactWriteItem{
+			//			dynamodbtypes.TransactWriteItem{
+			//				ConditionCheck: &dynamodbtypes.ConditionCheck{
+			//					ConditionExpression: expr.KeyCondition(),
+			//					Key: map[string]dynamodbtypes.AttributeValue{
+			//						"Logname": &dynamodbtypes.AttributeValueMemberS{
+			//							Value: s.path,
+			//						},
+			//					},
+			//					ExpressionAttributeValues:           expr.Values(),
+			//					ExpressionAttributeNames:            expr.Names(),
+			//					TableName:                           aws.String(sequencedTable),
+			//					ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureAllOld,
+			//				},
+			//			},
 			dynamodbtypes.TransactWriteItem{
-				ConditionCheck: &dynamodbtypes.ConditionCheck{
-					ConditionExpression: expr.KeyCondition(),
+				Update: &dynamodbtypes.Update{
 					Key: map[string]dynamodbtypes.AttributeValue{
 						"Logname": &dynamodbtypes.AttributeValueMemberS{
 							Value: s.path,
 						},
 					},
-					ExpressionAttributeValues:           expr.Values(),
-					ExpressionAttributeNames:            expr.Names(),
-					TableName:                           aws.String(sequencedTable),
-					ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureAllOld,
-				},
-			},
-			dynamodbtypes.TransactWriteItem{
-				Put: &dynamodbtypes.Put{
-					Item: map[string]dynamodbtypes.AttributeValue{
-						"Logname": &dynamodbtypes.AttributeValueMemberS{
-							Value: s.path,
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":increment": &dynamodbtypes.AttributeValueMemberN{
+							Value: fmt.Sprintf("%d", appendCount+newCount),
 						},
-						"Idx": &dynamodbtypes.AttributeValueMemberN{
-							Value: fmt.Sprintf("%d", seq+appendCount+newCount),
+						":seq": &dynamodbtypes.AttributeValueMemberN{
+							Value: fmt.Sprintf("%d", seq),
 						},
 					},
-					TableName: aws.String(sequencedTable),
+					//"Idx": &dynamodbtypes.AttributeValueMemberN{
+					//},
+					UpdateExpression:    aws.String("SET Idx = Idx + :increment"),
+					ConditionExpression: aws.String("Idx = :seq"),
+					TableName:           aws.String(sequencedTable),
 				},
 			},
 			dynamodbtypes.TransactWriteItem{

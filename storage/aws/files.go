@@ -70,7 +70,7 @@ type NewTreeFunc func(size uint64, root []byte) ([]byte, error)
 type CurrentTreeFunc func([]byte) (uint64, []byte, error)
 
 // New creates a new S3 and DDB Storage
-func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, integrateBundleBatchSize int) *Storage {
+func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, integrateBundleBatchSize int, withlock bool) *Storage {
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		klog.V(1).Infof("Couldn't load default configuration: %v", err)
@@ -91,7 +91,11 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 		integrateBundleBatchSize: integrateBundleBatchSize,
 	}
 
-	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatchNoLock)
+	if withlock {
+		r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
+	} else {
+		r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatchNoLock)
+	}
 
 	currCP, err := r.ReadCheckpoint()
 	if err != nil {

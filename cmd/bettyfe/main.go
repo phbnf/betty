@@ -22,6 +22,7 @@ var (
 	batchSize                = flag.Int("batch_size", 1, "Size of batch before flushing")
 	batchMaxAge              = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
 	integrateBundleBatchSize = flag.Int("integrate_bundle_batch_size", 4, "Max number of bundles to integrate at a time")
+	sequenceWithLock         = flag.Bool("sequence_with_lock", false, "Whether to use a lock for sequencing")
 
 	listen = flag.String("listen", ":2024", "Address:port to listen on")
 
@@ -82,7 +83,7 @@ func main() {
 	ct := currentTree(vKey)
 	nt := newTree(*path, sKey)
 
-	s := aws.New(ctx, *path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt, *bucketName, *integrateBundleBatchSize)
+	s := aws.New(ctx, *path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt, *bucketName, *integrateBundleBatchSize, *sequenceWithLock)
 	l := &latency{}
 
 	if _, err := s.ReadCheckpoint(); err != nil {

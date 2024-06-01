@@ -284,7 +284,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	klog.V(1).Infof("took %v to read the current sequenced index", time.Since(n))
 	n = time.Now()
 
-	if err := s.sequenceEntries(ctx, batch.Entries, seq); err != nil {
+	if err := s.sequenceEntriesAsBundles(ctx, batch.Entries, seq); err != nil {
 		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
 	}
 	klog.V(1).Infof("took %v to stage the %v sequenced entries", time.Since(n), len(batch.Entries))
@@ -343,6 +343,9 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 						},
 						":seq": &dynamodbtypes.AttributeValueMemberN{
 							Value: fmt.Sprintf("%d", seq),
+						},
+						":init_seq": &dynamodbtypes.AttributeValueMemberN{
+							Value: "0",
 						},
 					},
 					UpdateExpression:    aws.String("SET Idx = Idx + :increment"),
@@ -481,7 +484,7 @@ type Batch struct {
 	Entries []string
 }
 
-func (s *Storage) sequenceEntries(ctx context.Context, entries [][]byte, firstIdx uint64) error {
+func (s *Storage) sequenceEntriesAsBundles(ctx context.Context, entries [][]byte, firstIdx uint64) error {
 	// done by reading the bundle form the table at all times, and not from this function
 	bundleIndex, entriesInBundle := firstIdx/uint64(s.params.EntryBundleSize), firstIdx%uint64(s.params.EntryBundleSize)
 	bundle := [][]byte{}

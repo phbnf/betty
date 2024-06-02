@@ -241,23 +241,27 @@ func (s *Storage) unlockAWS(table string) error {
 
 // Sequence commits to sequence numbers for an entry
 // Returns the sequence number assigned to the first entry in the batch, or an error.
-func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
-	// TODO: check for deduplication first
-	hashB := sha256.Sum256(b)
-	key := base64.StdEncoding.EncodeToString(hashB[:])
-	idx, ok, err := s.ContainsHash(ctx, key)
-	if err != nil {
-		return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
+func (s *Storage) Sequence(ctx context.Context, b []byte, dedup bool) (uint64, error) {
+	var key string
+	if dedup {
+		hashB := sha256.Sum256(b)
+		key = base64.StdEncoding.EncodeToString(hashB[:])
+		idx, ok, err := s.ContainsHash(ctx, key)
+		if err != nil {
+			return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
+		}
+		if ok {
+			return idx, nil
+		}
 	}
-	if ok {
-		return idx, nil
-	}
-	idx, err = s.pool.Add(b)
-	if err != nil {
-		return 0, fmt.Errorf("can't add %s to pool: %v", key, err)
-	}
-	if err := s.AddHash(ctx, key, idx); err != nil {
-		return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
+	idx, err := s.pool.Add(b)
+	if dedup {
+		if err != nil {
+			return 0, fmt.Errorf("can't add %s to pool: %v", key, err)
+		}
+		if err := s.AddHash(ctx, key, idx); err != nil {
+			return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
+		}
 	}
 	return idx, nil
 }

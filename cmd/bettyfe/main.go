@@ -23,6 +23,7 @@ var (
 	batchMaxAge              = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
 	integrateBundleBatchSize = flag.Int("integrate_bundle_batch_size", 4, "Max number of bundles to integrate at a time")
 	sequenceWithLock         = flag.Bool("sequence_with_lock", false, "Whether to use a lock for sequencing")
+	dedupEntries             = flag.Bool("dedup_entries", false, "Whether to deduplicate entries before sequencing")
 
 	listen = flag.String("listen", ":2024", "Address:port to listen on")
 
@@ -105,7 +106,7 @@ func main() {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		idx, err := s.Sequence(ctx, b)
+		idx, err := s.Sequence(ctx, b, *dedupEntries)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(fmt.Sprintf("Failed to sequence entry: %v", err)))

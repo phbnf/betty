@@ -294,8 +294,8 @@ func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
 	_, err = s.ddb.PutItem(ctx, input)
 	if err != nil {
 		// Means that the entry was submitted after we checked for dedup, but before sequencing
-		var ccf dynamodbtypes.ConditionalCheckFailedException
-		if errors.As(err, ccf) {
+		var ccf *dynamodbtypes.ConditionalCheckFailedException
+		if errors.As(err, &ccf) {
 			return nil
 		}
 		return fmt.Errorf("couldn't add index for key%v: %v", key, err)

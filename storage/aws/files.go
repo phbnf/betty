@@ -348,9 +348,6 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 						":seq": &dynamodbtypes.AttributeValueMemberN{
 							Value: fmt.Sprintf("%d", seq),
 						},
-						":init_seq": &dynamodbtypes.AttributeValueMemberN{
-							Value: "0",
-						},
 					},
 					UpdateExpression:    aws.String("SET Idx = Idx + :increment"),
 					ConditionExpression: aws.String("Idx = :seq OR attribute_not_exists(Idx)"),

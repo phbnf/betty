@@ -92,6 +92,9 @@ func main() {
 			klog.Exitf("Failed to initialise log: %v", err)
 		}
 		klog.Infof("Initialised checkpoint.")
+		if err := s.WriteSequencedIndex(0); err != nil {
+			klog.Exitf("failed to initialise sequencer: %v", err)
+		}
 	}
 
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {

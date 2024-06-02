@@ -279,6 +279,7 @@ func (s *Storage) Contains(ctx context.Context, b []byte) (uint64, bool, error) 
 		if err := attributevalue.UnmarshalMap(output.Item, idx); err != nil {
 			return 0, false, fmt.Errorf("couldn't check that the log contains %v: %v", key, err)
 		}
+		klog.V(2).Infof("Found matchin entry in the log at index: %d", idx.Idx)
 		return idx.Idx, true, nil
 	}
 	return 0, false, nil

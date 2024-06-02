@@ -9,6 +9,7 @@ package aws
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -40,6 +41,7 @@ const (
 	lockDDBTable   = "bettyddblock"
 	entriesTable   = "bettyentries"
 	sequencedTable = "bettysequenced"
+	dedupTable     = "bettydedup"
 )
 
 // Storage implements storage functions on top of S3.
@@ -240,7 +242,46 @@ func (s *Storage) unlockAWS(table string) error {
 // Sequence commits to sequence numbers for an entry
 // Returns the sequence number assigned to the first entry in the batch, or an error.
 func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
+	// TODO: check for deduplication first
 	return s.pool.Add(b)
+}
+
+func (s *Storage) Contains(ctx context.Context, b []byte) (uint64, bool, error) {
+	hashB := sha256.Sum256(b)
+	key := base64.StdEncoding.EncodeToString(hashB[:])
+	item := struct {
+		Logname string
+		Hash    string
+	}{
+		Logname: s.path,
+		Hash:    key,
+	}
+	av, err := attributevalue.MarshalMap(item)
+	fmt.Println(av)
+	if err != nil {
+		return 0, false, fmt.Errorf("got error marshalling new dedup key: %s", err)
+	}
+
+	input := &dynamodb.GetItemInput{
+		Key:                  av,
+		TableName:            aws.String(dedupTable),
+		ConsistentRead:       aws.Bool(true),
+		ProjectionExpression: aws.String("Idx"),
+	}
+
+	output, err := s.ddb.GetItem(ctx, input)
+	if err != nil {
+		return 0, false, fmt.Errorf("couldn't check that the log contains %v: %v", key, err)
+	} else if len(output.Item) > 0 {
+		idx := &struct {
+			Idx uint64
+		}{}
+		if err := attributevalue.UnmarshalMap(output.Item, idx); err != nil {
+			return 0, false, fmt.Errorf("couldn't check that the log contains %v: %v", key, err)
+		}
+		return idx.Idx, true, nil
+	}
+	return 0, false, nil
 }
 
 // sequenceBatchAndIntegrate writes the entries from the provided batch into the entry bundle files of the log.

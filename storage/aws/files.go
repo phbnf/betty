@@ -279,7 +279,6 @@ func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
 		Idx:     idx,
 	}
 	av, err := attributevalue.MarshalMap(item)
-	fmt.Println(av)
 	if err != nil {
 		return fmt.Errorf("got error marshalling new dedup value: %s", err)
 	}
@@ -312,7 +311,6 @@ func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, e
 		Hash:    key,
 	}
 	av, err := attributevalue.MarshalMap(item)
-	fmt.Println(av)
 	if err != nil {
 		return 0, false, fmt.Errorf("got error marshalling new dedup key: %s", err)
 	}

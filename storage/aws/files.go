@@ -266,12 +266,14 @@ func (s *Storage) Sequence(ctx context.Context, b []byte, dedup bool) (uint64, e
 	return idx, nil
 }
 
+type dedup struct {
+	Logname string
+	Hash    string
+	Idx     uint64
+}
+
 func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
-	item := struct {
-		Logname string
-		Hash    string
-		Idx     uint64
-	}{
+	item := dedup{
 		Logname: s.path,
 		Hash:    key,
 		Idx:     idx,
@@ -283,12 +285,19 @@ func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
 	}
 
 	input := &dynamodb.PutItemInput{
-		Item:      av,
-		TableName: aws.String(dedupTable),
+		Item:                                av,
+		TableName:                           aws.String(dedupTable),
+		ConditionExpression:                 aws.String("attribute_not_exists(Idx)"),
+		ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureNone,
 	}
 
 	_, err = s.ddb.PutItem(ctx, input)
 	if err != nil {
+		// Means that the entry was submitted after we checked for dedup, but before sequencing
+		var ccf dynamodbtypes.ConditionalCheckFailedException
+		if errors.As(err, ccf) {
+			return nil
+		}
 		return fmt.Errorf("couldn't add index for key%v: %v", key, err)
 	}
 	return nil

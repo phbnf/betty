@@ -243,12 +243,54 @@ func (s *Storage) unlockAWS(table string) error {
 // Returns the sequence number assigned to the first entry in the batch, or an error.
 func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
 	// TODO: check for deduplication first
-	return s.pool.Add(b)
-}
-
-func (s *Storage) Contains(ctx context.Context, b []byte) (uint64, bool, error) {
 	hashB := sha256.Sum256(b)
 	key := base64.StdEncoding.EncodeToString(hashB[:])
+	idx, ok, err := s.ContainsHash(ctx, key)
+	if err != nil {
+		return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
+	}
+	if ok {
+		return idx, nil
+	}
+	idx, err = s.pool.Add(b)
+	if err != nil {
+		return 0, fmt.Errorf("can't add %s to pool: %v", key, err)
+	}
+	if err := s.AddHash(ctx, key, idx); err != nil {
+		return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
+	}
+	return idx, nil
+}
+
+func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
+	item := struct {
+		Logname string
+		Hash    string
+		Idx     uint64
+	}{
+		Logname: s.path,
+		Hash:    key,
+		Idx:     idx,
+	}
+	av, err := attributevalue.MarshalMap(item)
+	fmt.Println(av)
+	if err != nil {
+		return fmt.Errorf("got error marshalling new dedup value: %s", err)
+	}
+
+	input := &dynamodb.PutItemInput{
+		Item:      av,
+		TableName: aws.String(dedupTable),
+	}
+
+	_, err = s.ddb.PutItem(ctx, input)
+	if err != nil {
+		return fmt.Errorf("couldn't add index for key%v: %v", key, err)
+	}
+	return nil
+}
+
+func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, error) {
 	item := struct {
 		Logname string
 		Hash    string

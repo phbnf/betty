@@ -643,7 +643,6 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 		Entries: value,
 	}
 	av, err := attributevalue.MarshalMap(item)
-	fmt.Println(av)
 	if err != nil {
 		klog.Fatalf("Got error marshalling new movie item: %s", err)
 	}

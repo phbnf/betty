@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/transparency-dev/merkle"
@@ -25,6 +26,7 @@ import (
 	"github.com/transparency-dev/serverless-log/api"
 	"github.com/transparency-dev/serverless-log/api/layout"
 	"github.com/transparency-dev/serverless-log/client"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/klog/v2"
 )
 
@@ -47,12 +49,74 @@ var (
 	ErrSeqAlreadyAssigned = errors.New("sequence number already assigned")
 )
 
+type readCache struct {
+	sync.RWMutex
+
+	hits    int
+	entries map[string]*api.Tile
+}
+
+func (r *readCache) get(l, i uint64) (*api.Tile, bool) {
+	r.RLock()
+	defer r.RUnlock()
+	e, ok := r.entries[fmt.Sprintf("%d/%d", l, i)]
+	if ok {
+		r.hits++
+	}
+	return e, ok
+}
+
+func (r *readCache) set(l, i uint64, t *api.Tile) {
+	r.Lock()
+	defer r.Unlock()
+	k := fmt.Sprintf("%d/%d", l, i)
+	if _, ok := r.entries[k]; ok {
+		panic(fmt.Errorf("Attempting to overwrite %v", k))
+	}
+	r.entries[k] = t
+}
+
+func prewarmCache(nIDs []compact.NodeID, getTile func(l, i uint64) (*api.Tile, error)) error {
+	type li struct {
+		l, i uint64
+	}
+	// Ugh, fill cache:
+	tilesToFetch := make(map[li]bool)
+	for _, n := range nIDs {
+		tileLevel, tileIndex, _, _ := layout.NodeCoordsToTileAddress(uint64(n.Level), uint64(n.Index))
+		tilesToFetch[li{l: tileLevel, i: tileIndex}] = true
+	}
+	eg := errgroup.Group{}
+	for k := range tilesToFetch {
+		k := k
+		eg.Go(func() error {
+			_, err := getTile(k.l, k.i)
+			return err
+		})
+	}
+	return eg.Wait()
+}
+
 // Integrate adds all sequenced entries greater than fromSize into the tree.
 // Returns an updated Checkpoint, or an error.
 func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st IntegrateStorage, h merkle.LogHasher) (uint64, []byte, error) {
+	rc := readCache{entries: make(map[string]*api.Tile)}
+	defer func() {
+		klog.Infof("read cache hits: %d", rc.hits)
+	}()
 	getTile := func(l, i uint64) (*api.Tile, error) {
-		return st.GetTile(ctx, l, i, fromSize)
+		r, ok := rc.get(l, i)
+		if ok {
+			return r, nil
+		}
+		t, err := st.GetTile(ctx, l, i, fromSize)
+		if err != nil {
+			return nil, err
+		}
+		rc.set(l, i, t)
+		return t, nil
 	}
+	prewarmCache(compact.RangeNodes(0, fromSize, nil), getTile)
 
 	hashes, err := client.FetchRangeNodes(ctx, fromSize, func(_ context.Context, l, i uint64) (*api.Tile, error) {
 		return getTile(l, i)
@@ -108,10 +172,19 @@ func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st Integrat
 	// tiles and updated log state.
 	klog.V(1).Infof("New log state: size 0x%x hash: %x", baseRange.End(), newRoot)
 
+	eg := errgroup.Group{}
 	for k, t := range tc.m {
-		if err := st.StoreTile(ctx, k.level, k.index, t); err != nil {
-			return 0, nil, fmt.Errorf("failed to store tile at level %d index %d: %w", k.level, k.index, err)
-		}
+		k := k
+		t := t
+		eg.Go(func() error {
+			if err := st.StoreTile(ctx, k.level, k.index, t); err != nil {
+				return fmt.Errorf("failed to store tile at level %d index %d: %w", k.level, k.index, err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return 0, nil, err
 	}
 
 	return baseRange.End(), newRoot, nil

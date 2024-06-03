@@ -491,6 +491,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	}
 	_, err = s.ddb.TransactWriteItems(ctx, input)
 	if err != nil {
+		// TODO(phboneff): retry if didn't work
 		klog.V(2).Infof("couldnt' write sequencing transation: %v", err)
 	}
 	return seq, nil

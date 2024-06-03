@@ -415,6 +415,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)
 	}
 	klog.V(1).Infof("took %v to read the current sequenced index %d", time.Since(t), seq)
+	t = time.Now()
 
 	// done by reading the bundle form the table at all times, and not from this function
 	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
@@ -506,6 +507,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		// TODO(phboneff): retry if didn't work
 		klog.V(2).Infof("couldnt' write sequencing transation: %v", err)
 	}
+	klog.V(1).Infof("took %v to sequenceBatchNoLock", time.Since(t))
 	return seq, nil
 
 }

@@ -371,6 +371,7 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 }
 
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
+	n := time.Now()
 	// Double locking:
 	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
 	// - The Dynamodb `LockAWS()` ensures that distinct tasks are serialised.
@@ -384,8 +385,9 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		}
 		s.ddbMutex.Unlock()
 	}()
+	klog.V(1).Infof("took %v to acquire a sequencing lock", time.Since(n))
 
-	n := time.Now()
+	n = time.Now()
 	seq, err := s.ReadSequencedIndex()
 	if err != nil {
 		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)

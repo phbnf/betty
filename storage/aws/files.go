@@ -324,9 +324,9 @@ func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, e
 	}
 
 	input := &dynamodb.GetItemInput{
-		Key:                  av,
-		TableName:            aws.String(dedupTable),
-		ConsistentRead:       aws.Bool(true),
+		Key:       av,
+		TableName: aws.String(dedupTable),
+		//ConsistentRead:       aws.Bool(true),
 		ProjectionExpression: aws.String("Idx"),
 	}
 

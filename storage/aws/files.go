@@ -163,6 +163,7 @@ type Lock struct {
 // by the instance that put it.
 // If it cannot put a lockAWS, retries indefinitely.
 func (s *Storage) lockAWS(table string) error {
+	t := time.Now()
 	item := Lock{
 		Logname: s.path,
 		ID:      s.id,
@@ -199,6 +200,7 @@ func (s *Storage) lockAWS(table string) error {
 		}
 	}
 
+	klog.V(1).Infof("took %v to place a lock on table %s", time.Since(t), table)
 	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, table)
 	return nil
 }
@@ -244,9 +246,11 @@ func (s *Storage) unlockAWS(table string) error {
 func (s *Storage) Sequence(ctx context.Context, b []byte, dedup bool) (uint64, error) {
 	var key string
 	if dedup {
+		t := time.Now()
 		hashB := sha256.Sum256(b)
 		key = base64.StdEncoding.EncodeToString(hashB[:])
 		idx, ok, err := s.ContainsHash(ctx, key)
+		klog.V(1).Infof("took %v to check if a duplicate exists", time.Since(t))
 		if err != nil {
 			return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
 		}
@@ -254,14 +258,18 @@ func (s *Storage) Sequence(ctx context.Context, b []byte, dedup bool) (uint64, e
 			return idx, nil
 		}
 	}
+	t := time.Now()
 	idx, err := s.pool.Add(b)
+	klog.V(1).Infof("took %v to sequence leaf", time.Since(t))
 	if dedup {
+		t := time.Now()
 		if err != nil {
 			return 0, fmt.Errorf("can't add %s to pool: %v", key, err)
 		}
 		if err := s.AddHash(ctx, key, idx); err != nil {
 			return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
 		}
+		klog.V(1).Infof("took %v to write leaf hash and index to dedup", time.Since(t))
 	}
 	return idx, nil
 }
@@ -361,7 +369,6 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 }
 
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
-	n := time.Now()
 	// Double locking:
 	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
 	// - The Dynamodb `LockAWS()` ensures that distinct tasks are serialised.
@@ -376,6 +383,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		s.ddbMutex.Unlock()
 	}()
 
+	n := time.Now()
 	seq, err := s.ReadSequencedIndex()
 	if err != nil {
 		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)

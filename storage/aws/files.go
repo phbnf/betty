@@ -30,6 +30,9 @@ import (
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodbstreams"
 	"github.com/transparency-dev/merkle/rfc6962"
 	"github.com/transparency-dev/serverless-log/api"
 	"github.com/transparency-dev/serverless-log/api/layout"
@@ -944,4 +947,31 @@ func (s *Storage) ReadFile(path string) ([]byte, error) {
 		return nil, err
 	}
 	return body, nil
+}
+
+func (s *Storage) ListStreams() {
+
+	svc := dynamodbstreams.New(session.New())
+	input := &dynamodbstreams.ListStreamsInput{}
+
+	result, err := svc.ListStreams(input)
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case dynamodbstreams.ErrCodeResourceNotFoundException:
+				fmt.Println(dynamodbstreams.ErrCodeResourceNotFoundException, aerr.Error())
+			case dynamodbstreams.ErrCodeInternalServerError:
+				fmt.Println(dynamodbstreams.ErrCodeInternalServerError, aerr.Error())
+			default:
+				fmt.Println(aerr.Error())
+			}
+		} else {
+			// Print the error, cast err to awserr.Error to get the Code and
+			// Message from an error.
+			fmt.Println(err.Error())
+		}
+		return
+	}
+
+	fmt.Println(result)
 }

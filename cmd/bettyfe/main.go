@@ -114,6 +114,7 @@ func main() {
 		}
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
 		r.Body.Close()
+		s.ListStreams()
 		l.Add(time.Since(n))
 	})
 

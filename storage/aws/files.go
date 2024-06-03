@@ -260,16 +260,18 @@ func (s *Storage) Sequence(ctx context.Context, b []byte, dedup bool) (uint64, e
 	}
 	t := time.Now()
 	idx, err := s.pool.Add(b)
+	if err != nil {
+		klog.V(1).Infof("can't add %s to pool: %v", key, err)
+	}
 	klog.V(1).Infof("took %v to sequence leaf", time.Since(t))
 	if dedup {
-		t := time.Now()
-		if err != nil {
-			return 0, fmt.Errorf("can't add %s to pool: %v", key, err)
-		}
-		if err := s.AddHash(ctx, key, idx); err != nil {
-			return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
-		}
-		klog.V(1).Infof("took %v to write leaf hash and index to dedup", time.Since(t))
+		go func() {
+			t := time.Now()
+			if err := s.AddHash(ctx, key, idx); err != nil {
+				klog.V(2).Infof("can't add entry hashing to %s for deduplication: %v", key, err)
+			}
+			klog.V(1).Infof("took %v to write leaf hash and index to dedup", time.Since(t))
+		}()
 	}
 	return idx, nil
 }

@@ -28,11 +28,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodbstreams"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodbstreams"
 	"github.com/transparency-dev/merkle/rfc6962"
 	"github.com/transparency-dev/serverless-log/api"
 	"github.com/transparency-dev/serverless-log/api/layout"
@@ -950,26 +948,31 @@ func (s *Storage) ReadFile(path string) ([]byte, error) {
 }
 
 func (s *Storage) ListStreams() {
+	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		klog.V(1).Infof("Couldn't load default configuration: %v", err)
+		return
+	}
 
-	svc := dynamodbstreams.New(session.New())
+	svc := dynamodbstreams.NewFromConfig(sdkConfig)
 	input := &dynamodbstreams.ListStreamsInput{}
 
-	result, err := svc.ListStreams(input)
+	result, err := svc.ListStreams(context.TODO(), input)
 	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case dynamodbstreams.ErrCodeResourceNotFoundException:
-				fmt.Println(dynamodbstreams.ErrCodeResourceNotFoundException, aerr.Error())
-			case dynamodbstreams.ErrCodeInternalServerError:
-				fmt.Println(dynamodbstreams.ErrCodeInternalServerError, aerr.Error())
-			default:
-				fmt.Println(aerr.Error())
-			}
-		} else {
-			// Print the error, cast err to awserr.Error to get the Code and
-			// Message from an error.
-			fmt.Println(err.Error())
-		}
+		//if aerr, ok := err.(awserr.Error); ok {
+		//	switch aerr.Code() {
+		//	case dynamodbstreams.ErrCodeResourceNotFoundException:
+		//		fmt.Println(dynamodbstreams.ErrCodeResourceNotFoundException, aerr.Error())
+		//	case dynamodbstreams.ErrCodeInternalServerError:
+		//		fmt.Println(dynamodbstreams.ErrCodeInternalServerError, aerr.Error())
+		//	default:
+		//		fmt.Println(aerr.Error())
+		//	}
+		//} else {
+		//	// Print the error, cast err to awserr.Error to get the Code and
+		// Message from an error.
+		fmt.Println(err.Error())
+		//}
 		return
 	}
 

@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"sync"
 	"time"
+
+	"k8s.io/klog/v2"
 )
 
 type Batch struct {
@@ -63,6 +65,7 @@ func (p *Pool) Add(e []byte) (uint64, error) {
 
 func (p *Pool) flushWithLock() {
 	p.flushTimer.Stop()
+	klog.V(1).Infof("took %v to trigger a flush", time.Now().Sub(p.current.Born))
 	p.flushTimer = nil
 	b := p.current
 	p.current = &batch{

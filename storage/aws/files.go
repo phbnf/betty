@@ -41,7 +41,7 @@ const (
 	lockDDBTable   = "bettyddblock"
 	entriesTable   = "bettyentries"
 	sequencedTable = "bettysequenced"
-	dedupTable     = "bettydedup"
+	dedupTable     = "bettydedupnoname"
 )
 
 // Storage implements storage functions on top of S3.
@@ -277,16 +277,14 @@ func (s *Storage) Sequence(ctx context.Context, b []byte, dedup bool) (uint64, e
 }
 
 type dedup struct {
-	Logname string
-	Hash    string
-	Idx     uint64
+	Hash string
+	Idx  uint64
 }
 
 func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
 	item := dedup{
-		Logname: s.path,
-		Hash:    key,
-		Idx:     idx,
+		Hash: key,
+		Idx:  idx,
 	}
 	av, err := attributevalue.MarshalMap(item)
 	if err != nil {
@@ -314,11 +312,9 @@ func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
 
 func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, error) {
 	item := struct {
-		Logname string
-		Hash    string
+		Hash string
 	}{
-		Logname: s.path,
-		Hash:    key,
+		Hash: key,
 	}
 	av, err := attributevalue.MarshalMap(item)
 	if err != nil {

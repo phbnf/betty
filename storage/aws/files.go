@@ -258,12 +258,10 @@ func (s *Storage) Sequence(ctx context.Context, b []byte, dedup bool) (uint64, e
 			return idx, nil
 		}
 	}
-	t := time.Now()
 	idx, err := s.pool.Add(b)
 	if err != nil {
 		klog.V(1).Infof("can't add %s to pool: %v", key, err)
 	}
-	klog.V(1).Infof("took %v to sequence leaf", time.Since(t))
 	if dedup {
 		go func() {
 			t := time.Now()

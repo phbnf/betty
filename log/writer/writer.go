@@ -64,6 +64,7 @@ func (p *Pool) Add(e []byte) (uint64, error) {
 }
 
 func (p *Pool) flushWithLock() {
+	t := time.Now()
 	p.flushTimer.Stop()
 	klog.V(1).Infof("took %v to trigger a flush", time.Now().Sub(p.current.Born))
 	p.flushTimer = nil
@@ -77,6 +78,7 @@ func (p *Pool) flushWithLock() {
 		b.FirstSeq, b.Err = p.seq(context.TODO(), Batch{Entries: b.Entries})
 		close(b.Done)
 	}()
+	klog.V(1).Infof("Took %v to flushWithLock()", time.Since(t))
 }
 
 type batch struct {

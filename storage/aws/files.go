@@ -423,13 +423,21 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	return seq, nil
 }
 
+type latencySequenceNolock struct {
+	readIdx     time.Duration
+	transaction time.Duration
+}
+
 func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (uint64, error) {
 	t := time.Now()
+	l := latencySequenceNolock{}
+	startTime := t
 	seq, err := s.ReadSequencedIndex()
 	if err != nil {
 		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)
 	}
-	klog.V(1).Infof("took %v to read the current sequenced index %d", time.Since(t), seq)
+
+	l.readIdx = time.Since(t)
 	t = time.Now()
 
 	// done by reading the bundle form the table at all times, and not from this function
@@ -518,11 +526,12 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		},
 	}
 	_, err = s.ddb.TransactWriteItems(ctx, input)
+	l.transaction = time.Since(t)
 	if err != nil {
 		// TODO(phboneff): retry if didn't work
 		klog.V(2).Infof("couldnt' write sequencing transation: %v", err)
 	}
-	klog.V(1).Infof("took %v to sequenceBatchNoLock", time.Since(t))
+	klog.V(1).Infof("sequenceBatchNoLock: %v [readIDx: %v, transaction: %v]", time.Since(startTime), l.readIdx, l.transaction)
 	return seq, nil
 
 }

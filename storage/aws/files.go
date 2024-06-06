@@ -511,8 +511,19 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 
 }
 
+type latencyIntegration struct {
+	lock        time.Duration
+	readCP      time.Duration
+	readBundle  time.Duration
+	serialize   time.Duration
+	integration time.Duration
+	delete      time.Duration
+}
+
 func (s *Storage) Integrate(ctx context.Context) (bool, error) {
+	l := latencyIntegration{}
 	t := time.Now()
+	startTime := t
 	s.Lock()
 	if err := s.lockAWS(lockS3Table); err != nil {
 		panic(err)
@@ -524,7 +535,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 		s.Unlock()
 	}()
 
-	klog.V(1).Infof("took %v to place an integration lock", time.Since(t))
+	l.lock = time.Since(t)
 	t = time.Now()
 
 	currCP, err := s.ReadCheckpoint()
@@ -532,7 +543,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 		klog.Fatalf("Couldn't load checkpoint: %v", err)
 	}
 	size, _, _ := s.curTree(currCP)
-	klog.V(1).Infof("took %v to read the checkpoint to integrate to", time.Since(t))
+	l.readCP = time.Since(t)
 	t = time.Now()
 
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
@@ -544,7 +555,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 		klog.V(2).Info("nothing to integrate")
 		return false, nil
 	}
-	klog.V(1).Infof("took %v to read sequences bundles", time.Since(t))
+	l.readBundle = time.Since(t)
 	t = time.Now()
 	firstBundleIndex := batches[0].Idx
 
@@ -565,14 +576,14 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 			}
 		}
 	}
-	klog.V(1).Infof("took %v to serialize the entries to integrate and write them to S3", time.Since(t))
+	l.serialize = time.Since(t)
 	t = time.Now()
 
 	err = s.doIntegrate(ctx, size, entries)
 	if err != nil {
 		return false, fmt.Errorf("doIntegrate: %v", err)
 	}
-	klog.V(1).Infof("took %v to integrate entries", time.Since(t))
+	l.serialize = time.Since(t)
 	t = time.Now()
 
 	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index
@@ -583,7 +594,21 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	if err := s.deleteSequencedBundles(ctx, firstBundleIndex, fullBundles); err != nil {
 		return false, fmt.Errorf("deleteSequencedBundles(): err")
 	}
-	klog.V(1).Infof("took %v to delete old bundles", time.Since(t))
+	l.delete = time.Since(t)
+
+	//readCP      time.Duration
+	//readBundle  time.Duration
+	//serialize   time.Duration
+	//integration time.Duration
+	//delete      time.Duration
+	klog.V(1).Infof("Integrate: %v [lock: %v, readBundle %v, serialize %v, integration %v, delete %v]",
+		time.Since(startTime),
+		l.readCP,
+		l.readBundle,
+		l.serialize,
+		l.integration,
+		l.delete,
+	)
 
 	return more, nil
 }

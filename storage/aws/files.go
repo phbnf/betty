@@ -311,7 +311,7 @@ func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, e
 	defer func() {
 		klog.V(1).Infof("took %v to check if a duplicate exists", time.Since(t))
 	}()
-	ddbClient := dynamodb.NewFromConfig(s.sdkConfig)
+	ddbClient := s.ddb //dynamodb.NewFromConfig(s.sdkConfig)
 	item := struct {
 		Hash string
 	}{

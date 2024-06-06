@@ -248,11 +248,9 @@ func (s *Storage) unlockAWS(table string) error {
 func (s *Storage) Sequence(ctx context.Context, b []byte, dedup bool) (uint64, error) {
 	var key string
 	if dedup {
-		t := time.Now()
 		hashB := sha256.Sum256(b)
 		key = base64.StdEncoding.EncodeToString(hashB[:])
 		idx, ok, err := s.ContainsHash(ctx, key)
-		klog.V(1).Infof("took %v to check if a duplicate exists", time.Since(t))
 		if err != nil {
 			return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
 		}
@@ -266,11 +264,9 @@ func (s *Storage) Sequence(ctx context.Context, b []byte, dedup bool) (uint64, e
 	}
 	if dedup {
 		go func() {
-			t := time.Now()
 			if err := s.AddHash(ctx, key, idx); err != nil {
 				klog.V(2).Infof("can't add entry hashing to %s for deduplication: %v", key, err)
 			}
-			klog.V(1).Infof("took %v to write leaf hash and index to dedup", time.Since(t))
 		}()
 	}
 	return idx, nil
@@ -311,6 +307,10 @@ func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
 }
 
 func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, error) {
+	t := time.Now()
+	defer func() {
+		klog.V(1).Infof("took %v to check if a duplicate exists", time.Since(t))
+	}()
 	ddbClient := dynamodb.NewFromConfig(s.sdkConfig)
 	item := struct {
 		Hash string

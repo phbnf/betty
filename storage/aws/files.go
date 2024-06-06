@@ -599,7 +599,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("doIntegrate: %v", err)
 	}
-	l.serialize = time.Since(t)
+	l.integration = time.Since(t)
 	t = time.Now()
 
 	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index

@@ -202,8 +202,7 @@ func (s *Storage) lockAWS(table string) error {
 		}
 	}
 
-	klog.V(1).Infof("took %v to place a lock on table %s", time.Since(t), table)
-	klog.V(2).Infof("Successfully Acquired lock for %s to table %s", item.Logname, table)
+	klog.V(2).Infof("took %v to place a lock on table %s", time.Since(t), table)
 	return nil
 }
 

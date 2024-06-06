@@ -57,10 +57,11 @@ type Storage struct {
 
 	curSize uint64
 
-	bucket string
-	s3     s3.Client
-	id     int64
-	ddb    dynamodb.Client
+	sdkConfig aws.Config
+	bucket    string
+	s3        s3.Client
+	id        int64
+	ddb       dynamodb.Client
 
 	integrateBundleBatchSize int
 }
@@ -87,6 +88,7 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 		curTree:                  curTree,
 		newTree:                  newTree,
 		bucket:                   bucketName,
+		sdkConfig:                sdkConfig,
 		s3:                       *s3Client,
 		id:                       rand.Int63(),
 		ddb:                      *ddbClient,
@@ -309,6 +311,7 @@ func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
 }
 
 func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, error) {
+	ddbClient := dynamodb.NewFromConfig(s.sdkConfig)
 	item := struct {
 		Hash string
 	}{
@@ -326,7 +329,7 @@ func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, e
 		ProjectionExpression: aws.String("Idx"),
 	}
 
-	output, err := s.ddb.GetItem(ctx, input)
+	output, err := ddbClient.GetItem(ctx, input)
 	if err != nil {
 		return 0, false, fmt.Errorf("couldn't check that the log contains %v: %v", key, err)
 	} else if len(output.Item) > 0 {

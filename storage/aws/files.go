@@ -369,8 +369,17 @@ func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Ba
 	return err
 }
 
+type latencySequence struct {
+	lock     time.Duration
+	readIdx  time.Duration
+	stage    time.Duration
+	writeIdx time.Duration
+}
+
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
-	n := time.Now()
+	t := time.Now()
+	startTime := t
+	l := latencySequence{}
 	// Double locking:
 	// - The mutex `Lock()` ensures that multiple concurrent calls to this function within a task are serialised.
 	// - The Dynamodb `LockAWS()` ensures that distinct tasks are serialised.
@@ -384,26 +393,34 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		}
 		s.ddbMutex.Unlock()
 	}()
-	klog.V(1).Infof("took %v to acquire a sequencing lock", time.Since(n))
+	l.lock = time.Since(t)
+	t = time.Now()
 
-	n = time.Now()
 	seq, err := s.ReadSequencedIndex()
 	if err != nil {
 		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)
 	}
-	klog.V(1).Infof("took %v to read the current sequenced index", time.Since(n))
-	n = time.Now()
+	l.readIdx = time.Since(t)
+	t = time.Now()
 
 	if err := s.sequenceEntriesAsBundles(ctx, batch.Entries, seq); err != nil {
 		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
 	}
-	klog.V(1).Infof("took %v to stage the %v sequenced entries", time.Since(n), len(batch.Entries))
-	n = time.Now()
+	l.stage = time.Since(t)
+	t = time.Now()
 
 	if err := s.WriteSequencedIndex(seq + uint64(len(batch.Entries))); err != nil {
 		return 0, fmt.Errorf("couldn't commit to the sequenced Index: %v", err)
 	}
-	klog.V(1).Infof("took %v to write the new sequenced index", time.Since(n))
+	l.writeIdx = time.Since(t)
+
+	klog.V(1).Infof("sequenceBatch: %v [lock: %v, readIdx: %v, stage: %v, writeIdx: %v]",
+		time.Since(startTime),
+		l.lock,
+		l.readIdx,
+		l.stage,
+		l.writeIdx,
+	)
 	return seq, nil
 }
 

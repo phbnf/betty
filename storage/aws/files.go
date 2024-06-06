@@ -329,7 +329,9 @@ func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, e
 		ProjectionExpression: aws.String("Idx"),
 	}
 
+	t1 := time.Now()
 	output, err := ddbClient.GetItem(ctx, input)
+	klog.V(1).Infof("took %v to do a GetItem duplicate query", time.Since(t1))
 	if err != nil {
 		return 0, false, fmt.Errorf("couldn't check that the log contains %v: %v", key, err)
 	} else if len(output.Item) > 0 {

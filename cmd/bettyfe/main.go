@@ -101,7 +101,6 @@ func main() {
 
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
 		n := time.Now()
-
 		b, err := io.ReadAll(r.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -109,6 +108,7 @@ func main() {
 		}
 		idx, err := s.Sequence(ctx, b, *dedupEntries)
 		if err != nil {
+			klog.V(1).Infof("failed to sequence entry: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(fmt.Sprintf("Failed to sequence entry: %v", err)))
 			return

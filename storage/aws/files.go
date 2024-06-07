@@ -536,35 +536,33 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		},
 	}
 	output, err := s.ddb.TransactWriteItems(ctx, input)
-
-	l.transaction = time.Since(t)
-	if err != nil {
-		klog.V(1).Infof("couldnt' write sequencing transation: %v", err)
+	maxTries := 10
+	for retry := 1; err != nil && retry < maxTries; retry++ {
+		output, err = s.ddb.TransactWriteItems(ctx, input)
+		klog.V(1).Infof("couldnt' write sequencing transation, will retry at most %d times: %v", maxTries-retry, err)
 		// TODO(phboneff): retry if didn't work
 		var cdte *dynamodbtypes.TransactionCanceledException
 		if errors.As(err, &cdte) {
 			klog.V(1).Infof("%v", cdte)
-			for suberr := range cdte.CancellationReasons {
-				klog.V(1).Infof("%v", suberr)
-			}
 		}
 	}
-	// TODO: clean this
-	if err == nil {
-		tR, tW := 0.0, 0.0
-		for _, c := range output.ConsumedCapacity {
-			if c.ReadCapacityUnits != nil {
-				tR += *c.ReadCapacityUnits
-			}
-			if c.WriteCapacityUnits != nil {
-				tW += *c.WriteCapacityUnits
-			}
-		}
-		klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v", tR, tW)
+	l.transaction = time.Since(t)
+	if err != nil {
+		klog.V(1).Infof("couldnt' write sequencing transation: %v", err)
+		return 0, err
 	}
+	tR, tW := 0.0, 0.0
+	for _, c := range output.ConsumedCapacity {
+		if c.ReadCapacityUnits != nil {
+			tR += *c.ReadCapacityUnits
+		}
+		if c.WriteCapacityUnits != nil {
+			tW += *c.WriteCapacityUnits
+		}
+	}
+	klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v", tR, tW)
 	klog.V(1).Infof("sequenceBatchNoLock: %v [readIDx: %v, transaction: %v]", time.Since(startTime), l.readIdx, l.transaction)
 	return seq, nil
-
 }
 
 type latencyIntegration struct {

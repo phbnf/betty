@@ -735,10 +735,10 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 
 	// TODO(phboneff): fix context
 	output, err := s.ddb.PutItem(ctx, input)
-	klog.V(1).Infof("stageBundle- R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	if err != nil {
 		return err
 	}
+	klog.V(1).Infof("stageBundle- R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 
 	return nil
 }
@@ -762,11 +762,11 @@ func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64
 	}
 
 	output, err := s.ddb.Query(ctx, input)
-	klog.V(1).Infof("getSequencedBundles - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
-	klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)
 	if err != nil {
 		return nil, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
+	klog.V(1).Infof("getSequencedBundles - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
+	klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)
 	batches := []Batch{}
 	if len(output.Items) == 0 {
 		return batches, false, nil
@@ -805,10 +805,10 @@ func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte,
 	}
 
 	output, err := s.ddb.GetItem(ctx, input)
-	klog.V(1).Infof("getSequencedBundle - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	if err != nil {
 		return nil, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
+	klog.V(1).Infof("getSequencedBundle - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	val := Batch{}
 	if err := attributevalue.UnmarshalMap(output.Item, &val); err != nil {
 		return nil, fmt.Errorf("can't unmarshall sequenced index: %v", err)
@@ -845,10 +845,10 @@ func (s *Storage) deleteSequencedBundles(ctx context.Context, start, len uint64)
 		}
 
 		output, err := s.ddb.DeleteItem(ctx, input)
-		klog.V(1).Infof("deleteSequenceBundles - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 		if err != nil {
 			return fmt.Errorf("could not delete bundle %d: %v", i, err)
 		}
+		klog.V(1).Infof("deleteSequenceBundles - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	}
 	klog.V(2).Infof("successfully removed bundles %d to %d from the sequenced table", start, start+len)
 	return nil

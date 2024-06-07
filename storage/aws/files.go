@@ -436,6 +436,10 @@ type latencySequenceNolock struct {
 }
 
 func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (uint64, error) {
+	s.ddbMutex.Lock()
+	defer func() {
+		s.ddbMutex.Unlock()
+	}()
 	t := time.Now()
 	l := latencySequenceNolock{}
 	startTime := t

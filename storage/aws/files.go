@@ -202,8 +202,7 @@ func (s *Storage) lockAWS(table string) error {
 			klog.Fatalf("Got error calling PutItem: %s", err)
 		}
 	}
-
-	klog.V(1).Infof("lockAWS - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
+	klog.V(1).Infof("lockAWS - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	klog.V(2).Infof("took %v to place a lock on table %s", time.Since(t), table)
 	return nil
 }

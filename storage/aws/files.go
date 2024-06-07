@@ -767,7 +767,7 @@ func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64
 	if err != nil {
 		return nil, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
-	klog.V(1).Infof("getSequencedBundles - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
+	klog.V(1).Infof("getSequencedBundles - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)
 	batches := []Batch{}
 	if len(output.Items) == 0 {

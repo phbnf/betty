@@ -542,6 +542,9 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		var cdte *dynamodbtypes.TransactionCanceledException
 		if errors.As(err, &cdte) {
 			klog.V(1).Infof("%v", cdte)
+			for suberr := range cdte.CancellationReasons {
+				klog.V(1).Infof("%v", suberr)
+			}
 		}
 	}
 	// TODO: clean this
@@ -777,7 +780,7 @@ func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64
 	}
 
 	// return the actual start index!
-	return batches, (len(output.Items) > nBundle), nil
+	return batches, (int(output.ScannedCount) > nBundle), nil
 }
 
 func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte, error) {

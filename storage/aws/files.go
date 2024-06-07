@@ -534,21 +534,24 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		},
 	}
 	output, err := s.ddb.TransactWriteItems(ctx, input)
-	tR, tW := 0.0, 0.0
-	for _, c := range output.ConsumedCapacity {
-		if c.ReadCapacityUnits != nil {
-			tR += *c.ReadCapacityUnits
-		}
-		if c.WriteCapacityUnits != nil {
-			tW += *c.WriteCapacityUnits
-		}
-	}
-	klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v", tR, tW)
 
 	l.transaction = time.Since(t)
 	if err != nil {
 		// TODO(phboneff): retry if didn't work
 		klog.V(2).Infof("couldnt' write sequencing transation: %v", err)
+	}
+	// TODO: clean this
+	if err == nil {
+		tR, tW := 0.0, 0.0
+		for _, c := range output.ConsumedCapacity {
+			if c.ReadCapacityUnits != nil {
+				tR += *c.ReadCapacityUnits
+			}
+			if c.WriteCapacityUnits != nil {
+				tW += *c.WriteCapacityUnits
+			}
+		}
+		klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v", tR, tW)
 	}
 	klog.V(1).Infof("sequenceBatchNoLock: %v [readIDx: %v, transaction: %v]", time.Since(startTime), l.readIdx, l.transaction)
 	return seq, nil

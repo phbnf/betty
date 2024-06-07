@@ -188,10 +188,11 @@ func (s *Storage) lockAWS(table string) error {
 		ConditionExpression:       expr.Condition(),
 		ExpressionAttributeValues: expr.Values(),
 		ExpressionAttributeNames:  expr.Names(),
+		ReturnConsumedCapacity:    dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
 	// TODO(phboneff): fix context
-	_, err = s.ddb.PutItem(context.TODO(), input)
+	output, err := s.ddb.PutItem(context.TODO(), input)
 	if err != nil {
 		var cdte *dynamodbtypes.ConditionalCheckFailedException
 		if errors.As(err, &cdte) {
@@ -202,6 +203,7 @@ func (s *Storage) lockAWS(table string) error {
 		}
 	}
 
+	klog.V(1).Infof("lockAWS - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	klog.V(2).Infof("took %v to place a lock on table %s", time.Since(t), table)
 	return nil
 }
@@ -228,16 +230,18 @@ func (s *Storage) unlockAWS(table string) error {
 	}
 
 	input := &dynamodb.DeleteItemInput{
-		Key:                 av,
-		TableName:           aws.String(table),
-		ConditionExpression: expr.Condition(),
+		Key:                    av,
+		TableName:              aws.String(table),
+		ConditionExpression:    expr.Condition(),
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
-	_, err = s.ddb.DeleteItem(context.TODO(), input)
+	output, err := s.ddb.DeleteItem(context.TODO(), input)
 	if err != nil {
 		klog.Fatalf("Got error calling DeleteItem: %s", err)
 	}
 
+	klog.V(1).Infof("unlockAWS - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	klog.V(2).Infof("Successfully Removed lock for %s to table %s", item.Logname, table)
 	return nil
 }
@@ -291,9 +295,11 @@ func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
 		TableName:                           aws.String(dedupTable),
 		ConditionExpression:                 aws.String("attribute_not_exists(Idx)"),
 		ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureNone,
+		ReturnConsumedCapacity:              dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
-	_, err = s.ddb.PutItem(ctx, input)
+	output, err := s.ddb.PutItem(ctx, input)
+	klog.V(1).Infof("addHash - R: %v, W: %v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	if err != nil {
 		// Means that the entry was submitted after we checked for dedup, but before sequencing
 		var ccf *dynamodbtypes.ConditionalCheckFailedException
@@ -325,11 +331,13 @@ func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, e
 		Key:       av,
 		TableName: aws.String(dedupTable),
 		//ConsistentRead:       aws.Bool(true),
-		ProjectionExpression: aws.String("Idx"),
+		ProjectionExpression:   aws.String("Idx"),
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
 	t1 := time.Now()
 	output, err := ddbClient.GetItem(ctx, input)
+	klog.V(1).Infof("ContainsHash - R: %v, W: %v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	klog.V(1).Infof("took %v to do a GetItem duplicate query", time.Since(t1))
 	if err != nil {
 		return 0, false, fmt.Errorf("couldn't check that the log contains %v: %v", key, err)
@@ -464,6 +472,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	}
 
 	input := &dynamodb.TransactWriteItemsInput{
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 		TransactItems: []dynamodbtypes.TransactWriteItem{
 			dynamodbtypes.TransactWriteItem{
 				Update: &dynamodbtypes.Update{
@@ -525,7 +534,18 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 			},
 		},
 	}
-	_, err = s.ddb.TransactWriteItems(ctx, input)
+	output, err := s.ddb.TransactWriteItems(ctx, input)
+	tR, tW := 0.0, 0.0
+	for _, c := range output.ConsumedCapacity {
+		if c.ReadCapacityUnits != nil {
+			tR += *c.ReadCapacityUnits
+		}
+		if c.WriteCapacityUnits != nil {
+			tW += *c.WriteCapacityUnits
+		}
+	}
+	klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v", tR, tW)
+
 	l.transaction = time.Since(t)
 	if err != nil {
 		// TODO(phboneff): retry if didn't work
@@ -699,12 +719,14 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	}
 
 	input := &dynamodb.PutItemInput{
-		Item:      av,
-		TableName: aws.String(entriesTable),
+		Item:                   av,
+		TableName:              aws.String(entriesTable),
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
 	// TODO(phboneff): fix context
-	_, err = s.ddb.PutItem(ctx, input)
+	output, err := s.ddb.PutItem(ctx, input)
+	klog.V(1).Infof("stageBundle- R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	if err != nil {
 		klog.Fatalf("Couldn't write bundle: %v", err)
 	}
@@ -727,9 +749,11 @@ func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64
 		TableName:                 aws.String(entriesTable),
 		ConsistentRead:            aws.Bool(true),
 		Limit:                     aws.Int32(int32(nBundle) + 1),
+		ReturnConsumedCapacity:    dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
 	output, err := s.ddb.Query(ctx, input)
+	klog.V(1).Infof("getSequencedBundles - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)
 	if err != nil {
 		return nil, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
@@ -765,12 +789,14 @@ func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte,
 	}
 
 	input := &dynamodb.GetItemInput{
-		TableName:      aws.String(entriesTable),
-		Key:            av,
-		ConsistentRead: aws.Bool(true),
+		TableName:              aws.String(entriesTable),
+		Key:                    av,
+		ConsistentRead:         aws.Bool(true),
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
 	output, err := s.ddb.GetItem(ctx, input)
+	klog.V(1).Infof("getSequencedBundle - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	if err != nil {
 		return nil, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
@@ -804,11 +830,13 @@ func (s *Storage) deleteSequencedBundles(ctx context.Context, start, len uint64)
 		}
 
 		input := &dynamodb.DeleteItemInput{
-			Key:       av,
-			TableName: aws.String(entriesTable),
+			Key:                    av,
+			TableName:              aws.String(entriesTable),
+			ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityIndexes,
 		}
 
-		_, err = s.ddb.DeleteItem(ctx, input)
+		output, err := s.ddb.DeleteItem(ctx, input)
+		klog.V(1).Infof("deleteSequenceBundles - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 		if err != nil {
 			return fmt.Errorf("could not delete bundle %d: %v", i, err)
 		}

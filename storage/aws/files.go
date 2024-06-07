@@ -537,8 +537,12 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 
 	l.transaction = time.Since(t)
 	if err != nil {
-		// TODO(phboneff): retry if didn't work
 		klog.V(1).Infof("couldnt' write sequencing transation: %v", err)
+		// TODO(phboneff): retry if didn't work
+		var cdte *dynamodbtypes.TransactionCanceledException
+		if errors.As(err, &cdte) {
+			klog.V(1).Infof("%v", cdte)
+		}
 	}
 	// TODO: clean this
 	if err == nil {

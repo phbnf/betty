@@ -737,7 +737,7 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 	output, err := s.ddb.PutItem(ctx, input)
 	klog.V(1).Infof("stageBundle- R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	if err != nil {
-		klog.Fatalf("Couldn't write bundle: %v", err)
+		return err
 	}
 
 	return nil

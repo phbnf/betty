@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/AlCutter/betty/log"
 	"github.com/AlCutter/betty/log/writer"
@@ -460,6 +461,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	if err != nil {
 		return 0, fmt.Errorf("error marshaling entries list: %v", err)
 	}
+	fmt.Println(unsafe.Sizeof(entries))
 
 	values_next := make([]string, newCount)
 	for i := 0; uint64(i) < newCount; i++ {

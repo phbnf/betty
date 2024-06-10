@@ -37,11 +37,12 @@ import (
 )
 
 const (
-	lockS3Table    = "bettylog"
-	lockDDBTable   = "bettyddblock"
-	entriesTable   = "bettyentries"
-	sequencedTable = "bettysequenced"
-	dedupTable     = "bettydedupnoname"
+	lockS3Table       = "bettylog"
+	lockDDBTable      = "bettyddblock"
+	entriesTable      = "bettyentries"
+	bundleSlicesTable = "bettybundleslices"
+	sequencedTable    = "bettysequenced"
+	dedupTable        = "bettydedupnoname"
 )
 
 // Storage implements storage functions on top of S3.
@@ -63,6 +64,7 @@ type Storage struct {
 	id        int64
 	ddb       dynamodb.Client
 
+	sequencedBundleMaxSize   int
 	integrateBundleBatchSize int
 }
 
@@ -73,7 +75,7 @@ type NewTreeFunc func(size uint64, root []byte) ([]byte, error)
 type CurrentTreeFunc func([]byte) (uint64, []byte, error)
 
 // New creates a new S3 and DDB Storage
-func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, batchSize int, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, integrateBundleBatchSize int, withlock bool) *Storage {
+func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, batchSize int, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, sequencedBundleMaxSize, integrateBundleBatchSize int, withlock bool) *Storage {
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		klog.V(1).Infof("Couldn't load default configuration: %v", err)
@@ -93,6 +95,7 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 		id:                       rand.Int63(),
 		ddb:                      *ddbClient,
 		integrateBundleBatchSize: integrateBundleBatchSize,
+		sequencedBundleMaxSize:   sequencedBundleMaxSize,
 	}
 
 	if withlock {
@@ -409,7 +412,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	l.readIdx = time.Since(t)
 	t = time.Now()
 
-	if err := s.sequenceEntriesAsBundles(ctx, batch.Entries, seq); err != nil {
+	if err := s.sequenceEntriesAsBundlesSlices(ctx, batch.Entries, seq); err != nil {
 		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
 	}
 	l.stage = time.Since(t)
@@ -603,7 +606,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	t = time.Now()
 
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
-	batches, more, err := s.getSequencedBundles(ctx, size/uint64(s.params.EntryBundleSize), s.integrateBundleBatchSize)
+	batches, more, err := s.getSequencedBundlesSlices(ctx, size/uint64(s.params.EntryBundleSize), s.integrateBundleBatchSize)
 	if err != nil {
 		return false, fmt.Errorf("getSequencesBundles: %v", err)
 	}
@@ -613,7 +616,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	}
 	l.readBundle = time.Since(t)
 	t = time.Now()
-	firstBundleIndex := batches[0].Idx
+	//firstBundleIndex := batches[0].Idx
 
 	entries := make([][]byte, 0)
 	for _, b := range batches {
@@ -642,15 +645,16 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	l.integration = time.Since(t)
 	t = time.Now()
 
+	// TODO: delete entries we've read
 	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index
 	// Then delete the bundles that we will never need to integrate again
-	firstEntryIndex := firstBundleIndex * uint64(s.params.EntryBundleSize)
-	fullBundles := (firstEntryIndex%uint64(s.params.EntryBundleSize) + uint64(len(entries))) / uint64(s.params.EntryBundleSize)
-	klog.V(2).Infof("Will delete %d bundles from %d", fullBundles, firstBundleIndex)
-	if err := s.deleteSequencedBundles(ctx, firstBundleIndex, fullBundles); err != nil {
-		return false, fmt.Errorf("deleteSequencedBundles(): err")
-	}
-	l.delete = time.Since(t)
+	//firstEntryIndex := firstBundleIndex * uint64(s.params.EntryBundleSize)
+	//fullBundles := (firstEntryIndex%uint64(s.params.EntryBundleSize) + uint64(len(entries))) / uint64(s.params.EntryBundleSize)
+	//klog.V(2).Infof("Will delete %d bundles from %d", fullBundles, firstBundleIndex)
+	//if err := s.deleteSequencedBundles(ctx, firstBundleIndex, fullBundles); err != nil {
+	//	return false, fmt.Errorf("deleteSequencedBundles(): err")
+	//}
+	//l.delete = time.Since(t)
 
 	//readCP      time.Duration
 	//readBundle  time.Duration
@@ -675,53 +679,57 @@ type Batch struct {
 	Entries []string
 }
 
-func (s *Storage) sequenceEntriesAsBundles(ctx context.Context, entries [][]byte, firstIdx uint64) error {
+type BatchSlice struct {
+	Idx     uint64
+	Offset  uint64
+	Len     int
+	Entries []string
+}
+
+func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries [][]byte, firstIdx uint64) error {
 	// done by reading the bundle form the table at all times, and not from this function
 	bundleIndex, entriesInBundle := firstIdx/uint64(s.params.EntryBundleSize), firstIdx%uint64(s.params.EntryBundleSize)
-	bundle := [][]byte{}
-	if entriesInBundle > 0 {
-		// If the latest bundle is partial, we need to read the data it contains in for our newer, larger, bundle.
-		part, err := s.getSequencedBundle(ctx, bundleIndex)
-		// TODO: check that this is not a "not found error"
-		if err != nil {
-			return err
-		}
-		bundle = append(bundle, part...)
-	}
+	bundleSlice := [][]byte{}
 	// Add new entries to the bundle
 	for _, e := range entries {
 		encoded := []byte(base64.StdEncoding.EncodeToString(e))
-		bundle = append(bundle, encoded)
-		entriesInBundle++
+		bundleSlice = append(bundleSlice, encoded)
 		if entriesInBundle == uint64(s.params.EntryBundleSize) {
 			//  This bundle is full, so we need to write it out...
-			if err := s.stageBundle(ctx, bundle, bundleIndex); err != nil {
+			if err := s.stageBundleSlice(ctx, bundleSlice, bundleIndex, entriesInBundle); err != nil {
 				return err
 			}
 			// ... and prepare the next entry bundle for any remaining entries in the batch
 			bundleIndex++
 			entriesInBundle = 0
-			bundle = [][]byte{}
+			bundleSlice = [][]byte{}
 		}
+		entriesInBundle++
 	}
 	// If we have a partial bundle remaining once we've added all the entries from the batch,
 	// this needs writing out too.
 	if entriesInBundle > 0 {
-		if err := s.stageBundle(ctx, bundle, bundleIndex); err != nil {
+		if err := s.stageBundleSlice(ctx, bundleSlice, bundleIndex, entriesInBundle); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx uint64) error {
+func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundleIdx uint64, offset uint64) error {
 	value := make([]string, len(entries))
 	for i, e := range entries {
 		value[i] = string(e)
 	}
-	item := Batch{
-		Logname: s.path,
+	item := struct {
+		Idx     uint64
+		Offset  uint64
+		Len     int
+		Entries []string
+	}{
 		Idx:     bundleIdx,
+		Offset:  offset,
+		Len:     len(entries),
 		Entries: value,
 	}
 	av, err := attributevalue.MarshalMap(item)
@@ -731,23 +739,23 @@ func (s *Storage) stageBundle(ctx context.Context, entries [][]byte, bundleIdx u
 
 	input := &dynamodb.PutItemInput{
 		Item:                   av,
-		TableName:              aws.String(entriesTable),
+		TableName:              aws.String(bundleSlicesTable),
 		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
-	// TODO(phboneff): fix context
 	output, err := s.ddb.PutItem(ctx, input)
 	if err != nil {
 		return err
 	}
-	klog.V(1).Infof("stageBundle- R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
+	klog.V(1).Infof("stageBundleSlice- R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 
 	return nil
 }
 
-func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64, nBundle int) ([]Batch, bool, error) {
-	// TODO: handle more bundles better than this
-	keyCond := expression.Key("Logname").Equal(expression.Value(s.path)).And(expression.Key("Idx").GreaterThanEqual(expression.Value(startBundleIdx)))
+func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx uint64, nBundle int) ([]Batch, bool, error) {
+	// TODO: handle more bundles than one at a time
+	// Right now, it just just reads a isngle bundle at a time
+	keyCond := expression.Key("Idx").Equal(expression.Value(startBundleIdx))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
 	if err != nil {
 		klog.Fatalf("Cannot create dynamodb condition: %v", err)
@@ -759,68 +767,31 @@ func (s *Storage) getSequencedBundles(ctx context.Context, startBundleIdx uint64
 		ExpressionAttributeNames:  expr.Names(),
 		TableName:                 aws.String(entriesTable),
 		ConsistentRead:            aws.Bool(true),
-		Limit:                     aws.Int32(int32(nBundle) + 1),
-		ReturnConsumedCapacity:    dynamodbtypes.ReturnConsumedCapacityTotal,
+		//Limit:                     aws.Int32(int32(nBundle) + 1),
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
 	output, err := s.ddb.Query(ctx, input)
 	if err != nil {
 		return nil, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
-	klog.V(1).Infof("getSequencedBundles - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
+	klog.V(1).Infof("getSequencedBundlesSlices - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)
-	batches := []Batch{}
+	batches := make([]Batch, 1)
+	batchSlices := []BatchSlice{}
 	if len(output.Items) == 0 {
 		return batches, false, nil
 	}
-	n := len(output.Items)
-	if n > nBundle {
-		n = nBundle
-	}
-	if err := attributevalue.UnmarshalListOfMaps(output.Items[:n], &batches); err != nil {
+	if err := attributevalue.UnmarshalListOfMaps(output.Items, &batchSlices); err != nil {
 		return nil, false, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
-
-	// return the actual start index!
-	return batches, (int(output.ScannedCount) > nBundle), nil
-}
-
-func (s *Storage) getSequencedBundle(ctx context.Context, idx uint64) ([][]byte, error) {
-	key := struct {
-		Logname string
-		Idx     uint64
-	}{
-		Logname: s.path,
-		Idx:     idx,
+	for _, slice := range batchSlices {
+		batches[0].Logname = s.path
+		batches[0].Idx = slice.Idx
+		batches[0].Entries = append(batches[0].Entries, slice.Entries...)
 	}
 
-	av, err := attributevalue.MarshalMap(key)
-	if err != nil {
-		klog.Fatalf("Got error marshalling sequenced key: %s", err)
-	}
-
-	input := &dynamodb.GetItemInput{
-		TableName:              aws.String(entriesTable),
-		Key:                    av,
-		ConsistentRead:         aws.Bool(true),
-		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
-	}
-
-	output, err := s.ddb.GetItem(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
-	}
-	klog.V(1).Infof("getSequencedBundle - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
-	val := Batch{}
-	if err := attributevalue.UnmarshalMap(output.Item, &val); err != nil {
-		return nil, fmt.Errorf("can't unmarshall sequenced index: %v", err)
-	}
-	ret := make([][]byte, len(val.Entries))
-	for i, e := range val.Entries {
-		ret[i] = []byte(e)
-	}
-
-	return ret, nil
+	return batches, (len(batches[0].Entries) == s.params.EntryBundleSize), nil
 }
 
 func (s *Storage) deleteSequencedBundles(ctx context.Context, start, len uint64) error {
@@ -828,11 +799,9 @@ func (s *Storage) deleteSequencedBundles(ctx context.Context, start, len uint64)
 	for i := start; i < start+len; i++ {
 		// TODO(phboneff): see if I can bundle everything in on transation
 		item := struct {
-			Logname string
-			Idx     uint64
+			Idx uint64
 		}{
-			Logname: s.path,
-			Idx:     i,
+			Idx: i,
 		}
 
 		av, err := attributevalue.MarshalMap(item)
@@ -842,7 +811,7 @@ func (s *Storage) deleteSequencedBundles(ctx context.Context, start, len uint64)
 
 		input := &dynamodb.DeleteItemInput{
 			Key:                    av,
-			TableName:              aws.String(entriesTable),
+			TableName:              aws.String(bundleSlicesTable),
 			ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityIndexes,
 		}
 

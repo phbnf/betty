@@ -40,7 +40,7 @@ const (
 	lockS3Table       = "bettylog"
 	lockDDBTable      = "bettyddblock"
 	entriesTable      = "bettyentries"
-	bundleSlicesTable = "bettybundleslices"
+	bundleSlicesTable = "bettybundlesslices"
 	sequencedTable    = "bettysequenced"
 	dedupTable        = "bettydedupnoname"
 )
@@ -454,27 +454,61 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	l.readIdx = time.Since(t)
 	t = time.Now()
 
-	// done by reading the bundle form the table at all times, and not from this function
 	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
-	appendCount := min(uint64(s.params.EntryBundleSize)-entriesInBundle, uint64(len(batch.Entries)))
-	newCount := uint64(len(batch.Entries)) - appendCount
-
-	values := make([]string, appendCount)
-	for i := uint64(0); i < appendCount; i++ {
-		values[i] = string(batch.Entries[i])
+	writes := []dynamodbtypes.TransactWriteItem{}
+	values := []string{}
+	for _, e := range batch.Entries {
+		values = append(values, string(e))
+		if entriesInBundle == uint64(s.params.EntryBundleSize) || len(values) == s.sequencedBundleMaxSize {
+			entries, err := attributevalue.MarshalList(values)
+			if err != nil {
+				return 0, fmt.Errorf("error marshaling entries list: %v", err)
+			}
+			writes = append(writes, dynamodbtypes.TransactWriteItem{
+				Put: &dynamodbtypes.Put{
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"Idx": &dynamodbtypes.AttributeValueMemberN{
+							Value: fmt.Sprintf("%d", bundleIndex),
+						},
+						"Offset": &dynamodbtypes.AttributeValueMemberN{
+							Value: fmt.Sprintf("%d", entriesInBundle),
+						},
+						"Entries": &dynamodbtypes.AttributeValueMemberL{
+							Value: entries,
+						},
+					},
+					TableName: aws.String(bundleSlicesTable),
+				},
+			})
+			if entriesInBundle == uint64(s.params.EntryBundleSize) {
+				entriesInBundle = 0
+			} else {
+				entriesInBundle += uint64(len(values))
+			}
+			values = []string{}
+		}
 	}
-	entries, err := attributevalue.MarshalList(values)
-	if err != nil {
-		return 0, fmt.Errorf("error marshaling entries list: %v", err)
-	}
-
-	values_next := make([]string, newCount)
-	for i := 0; uint64(i) < newCount; i++ {
-		values_next[i] = string(batch.Entries[i+int(appendCount)])
-	}
-	entries_next, err := attributevalue.MarshalList(values_next)
-	if err != nil {
-		return 0, fmt.Errorf("error marshaling entries list: %v", err)
+	if len(values) != 0 {
+		entries, err := attributevalue.MarshalList(values)
+		if err != nil {
+			return 0, fmt.Errorf("error marshaling entries list: %v", err)
+		}
+		writes = append(writes, dynamodbtypes.TransactWriteItem{
+			Put: &dynamodbtypes.Put{
+				Item: map[string]dynamodbtypes.AttributeValue{
+					"Idx": &dynamodbtypes.AttributeValueMemberN{
+						Value: fmt.Sprintf("%d", bundleIndex),
+					},
+					"Offset": &dynamodbtypes.AttributeValueMemberN{
+						Value: fmt.Sprintf("%d", entriesInBundle),
+					},
+					"Entries": &dynamodbtypes.AttributeValueMemberL{
+						Value: entries,
+					},
+				},
+				TableName: aws.String(bundleSlicesTable),
+			},
+		})
 	}
 
 	input := &dynamodb.TransactWriteItemsInput{
@@ -489,7 +523,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 					},
 					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
 						":increment": &dynamodbtypes.AttributeValueMemberN{
-							Value: fmt.Sprintf("%d", appendCount+newCount),
+							Value: fmt.Sprintf("%d", len(batch.Entries)),
 						},
 						":seq": &dynamodbtypes.AttributeValueMemberN{
 							Value: fmt.Sprintf("%d", seq),
@@ -500,46 +534,9 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 					TableName:           aws.String(sequencedTable),
 				},
 			},
-			dynamodbtypes.TransactWriteItem{
-				Update: &dynamodbtypes.Update{
-					Key: map[string]dynamodbtypes.AttributeValue{
-						"Logname": &dynamodbtypes.AttributeValueMemberS{
-							Value: s.path,
-						},
-						"Idx": &dynamodbtypes.AttributeValueMemberN{
-							Value: fmt.Sprintf("%d", bundleIndex),
-						},
-					},
-					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
-						":entries": &dynamodbtypes.AttributeValueMemberL{
-							Value: entries,
-						},
-						":empty_list": &dynamodbtypes.AttributeValueMemberL{
-							Value: []dynamodbtypes.AttributeValue{},
-						},
-					},
-					UpdateExpression: aws.String("SET Entries = list_append(if_not_exists(Entries, :empty_list), :entries)"),
-					TableName:        aws.String(entriesTable),
-				},
-			},
-			dynamodbtypes.TransactWriteItem{
-				Put: &dynamodbtypes.Put{
-					Item: map[string]dynamodbtypes.AttributeValue{
-						"Logname": &dynamodbtypes.AttributeValueMemberS{
-							Value: s.path,
-						},
-						"Idx": &dynamodbtypes.AttributeValueMemberN{
-							Value: fmt.Sprintf("%d", (bundleIndex + 1)),
-						},
-						"Entries": &dynamodbtypes.AttributeValueMemberL{
-							Value: entries_next,
-						},
-					},
-					TableName: aws.String(entriesTable),
-				},
-			},
 		},
 	}
+	input.TransactItems = append(input.TransactItems, writes...)
 	output, err := s.ddb.TransactWriteItems(ctx, input)
 	maxTries := 10
 	for retry := 1; err != nil && retry < maxTries; retry++ {
@@ -694,17 +691,20 @@ func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries []
 	for _, e := range entries {
 		encoded := []byte(base64.StdEncoding.EncodeToString(e))
 		bundleSlice = append(bundleSlice, encoded)
-		if entriesInBundle == uint64(s.params.EntryBundleSize) {
+		if entriesInBundle == uint64(s.params.EntryBundleSize) || len(bundleSlice) == s.sequencedBundleMaxSize {
 			//  This bundle is full, so we need to write it out...
 			if err := s.stageBundleSlice(ctx, bundleSlice, bundleIndex, entriesInBundle); err != nil {
 				return err
 			}
 			// ... and prepare the next entry bundle for any remaining entries in the batch
 			bundleIndex++
-			entriesInBundle = 0
+			if entriesInBundle == uint64(s.params.EntryBundleSize) {
+				entriesInBundle = 0
+			} else {
+				entriesInBundle += uint64(len(bundleSlice))
+			}
 			bundleSlice = [][]byte{}
 		}
-		entriesInBundle++
 	}
 	// If we have a partial bundle remaining once we've added all the entries from the batch,
 	// this needs writing out too.
@@ -724,12 +724,10 @@ func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundle
 	item := struct {
 		Idx     uint64
 		Offset  uint64
-		Len     int
 		Entries []string
 	}{
 		Idx:     bundleIdx,
 		Offset:  offset,
-		Len:     len(entries),
 		Entries: value,
 	}
 	av, err := attributevalue.MarshalMap(item)
@@ -765,7 +763,7 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 		KeyConditionExpression:    expr.KeyCondition(),
 		ExpressionAttributeValues: expr.Values(),
 		ExpressionAttributeNames:  expr.Names(),
-		TableName:                 aws.String(entriesTable),
+		TableName:                 aws.String(bundleSlicesTable),
 		ConsistentRead:            aws.Bool(true),
 		//Limit:                     aws.Int32(int32(nBundle) + 1),
 		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,

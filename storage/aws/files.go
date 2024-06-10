@@ -455,10 +455,12 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	t = time.Now()
 
 	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
+	offset := entriesInBundle
 	writes := []dynamodbtypes.TransactWriteItem{}
 	values := []string{}
 	for _, e := range batch.Entries {
 		values = append(values, string(e))
+		entriesInBundle++
 		if entriesInBundle == uint64(s.params.EntryBundleSize) || len(values) == s.sequencedBundleMaxSize {
 			entries, err := attributevalue.MarshalList(values)
 			if err != nil {
@@ -471,7 +473,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 							Value: fmt.Sprintf("%d", bundleIndex),
 						},
 						"Offset": &dynamodbtypes.AttributeValueMemberN{
-							Value: fmt.Sprintf("%d", entriesInBundle),
+							Value: fmt.Sprintf("%d", offset),
 						},
 						"Entries": &dynamodbtypes.AttributeValueMemberL{
 							Value: entries,
@@ -482,9 +484,10 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 			})
 			if entriesInBundle == uint64(s.params.EntryBundleSize) {
 				entriesInBundle = 0
+				offset = 0
 				bundleIndex++
 			} else {
-				entriesInBundle += uint64(len(values))
+				offset += uint64(len(values))
 			}
 			values = []string{}
 		}
@@ -501,7 +504,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 						Value: fmt.Sprintf("%d", bundleIndex),
 					},
 					"Offset": &dynamodbtypes.AttributeValueMemberN{
-						Value: fmt.Sprintf("%d", entriesInBundle),
+						Value: fmt.Sprintf("%d", offset),
 					},
 					"Entries": &dynamodbtypes.AttributeValueMemberL{
 						Value: entries,
@@ -687,22 +690,25 @@ type BatchSlice struct {
 func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries [][]byte, firstIdx uint64) error {
 	// done by reading the bundle form the table at all times, and not from this function
 	bundleIndex, entriesInBundle := firstIdx/uint64(s.params.EntryBundleSize), firstIdx%uint64(s.params.EntryBundleSize)
+	offset := entriesInBundle
 	bundleSlice := [][]byte{}
 	// Add new entries to the bundle
 	for _, e := range entries {
 		encoded := []byte(base64.StdEncoding.EncodeToString(e))
 		bundleSlice = append(bundleSlice, encoded)
+		entriesInBundle++
 		if entriesInBundle == uint64(s.params.EntryBundleSize) || len(bundleSlice) == s.sequencedBundleMaxSize {
 			//  This bundle is full, so we need to write it out...
-			if err := s.stageBundleSlice(ctx, bundleSlice, bundleIndex, entriesInBundle); err != nil {
+			if err := s.stageBundleSlice(ctx, bundleSlice, bundleIndex, offset); err != nil {
 				return err
 			}
 			// ... and prepare the next entry bundle for any remaining entries in the batch
 			if entriesInBundle == uint64(s.params.EntryBundleSize) {
 				bundleIndex++
 				entriesInBundle = 0
+				offset = 0
 			} else {
-				entriesInBundle += uint64(len(bundleSlice))
+				offset += uint64(len(bundleSlice))
 			}
 			bundleSlice = [][]byte{}
 		}
@@ -710,7 +716,7 @@ func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries []
 	// If we have a partial bundle remaining once we've added all the entries from the batch,
 	// this needs writing out too.
 	if entriesInBundle > 0 {
-		if err := s.stageBundleSlice(ctx, bundleSlice, bundleIndex, entriesInBundle); err != nil {
+		if err := s.stageBundleSlice(ctx, bundleSlice, bundleIndex, offset); err != nil {
 			return err
 		}
 	}

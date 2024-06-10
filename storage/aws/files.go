@@ -482,6 +482,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 			})
 			if entriesInBundle == uint64(s.params.EntryBundleSize) {
 				entriesInBundle = 0
+				bundleIndex++
 			} else {
 				entriesInBundle += uint64(len(values))
 			}
@@ -697,8 +698,8 @@ func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries []
 				return err
 			}
 			// ... and prepare the next entry bundle for any remaining entries in the batch
-			bundleIndex++
 			if entriesInBundle == uint64(s.params.EntryBundleSize) {
+				bundleIndex++
 				entriesInBundle = 0
 			} else {
 				entriesInBundle += uint64(len(bundleSlice))
@@ -784,6 +785,7 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 		return nil, false, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
 	for _, slice := range batchSlices {
+		klog.V(2).Infof("fetched bundle starting at %d with offset %d", slice.Idx, slice.Offset)
 		batches[0].Logname = s.path
 		batches[0].Idx = slice.Idx
 		batches[0].Entries = append(batches[0].Entries, slice.Entries...)

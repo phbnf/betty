@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"sync"
 	"time"
-
-	"k8s.io/klog/v2"
 )
 
 type Batch struct {
@@ -83,7 +81,6 @@ func (p *Pool) flushWithLock() {
 	}
 	go func() {
 		b.Seqs, b.Err = p.seq(context.TODO(), Batch{Entries: b.Entries})
-		klog.V(1).Infof("Will print b.Seqs: %v", b.Seqs)
 		close(b.Done)
 	}()
 }

@@ -566,14 +566,14 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 			continue
 		}
 		values = append(values, string(e))
+		ret[i] = seq
+		seq++
 		entriesInBundle++
 		if entriesInBundle == uint64(s.params.EntryBundleSize) || len(values) == s.sequencedBundleMaxSize {
 			entries, err := attributevalue.MarshalList(values)
 			if err != nil {
 				return nil, fmt.Errorf("error marshaling entries list: %v", err)
 			}
-			ret[i] = seq
-			seq++
 			writes = append(writes, dynamodbtypes.TransactWriteItem{
 				Put: &dynamodbtypes.Put{
 					Item: map[string]dynamodbtypes.AttributeValue{

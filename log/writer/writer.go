@@ -2,6 +2,7 @@ package writer
 
 import (
 	"context"
+	"crypto/sha256"
 	"sync"
 	"time"
 
@@ -20,7 +21,8 @@ type SequenceFunc func(context.Context, Batch) ([]uint64, error)
 func NewPool(bufferSize int, maxAge time.Duration, s SequenceFunc) *Pool {
 	return &Pool{
 		current: &batch{
-			Done: make(chan struct{}),
+			Done:   make(chan struct{}),
+			Hashes: make(map[[32]byte]uint64),
 		},
 		bufferSize: bufferSize,
 		seq:        s,
@@ -75,7 +77,8 @@ func (p *Pool) flushWithLock() {
 	p.flushTimer = nil
 	b := p.current
 	p.current = &batch{
-		Done: make(chan struct{}),
+		Done:   make(chan struct{}),
+		Hashes: make(map[[32]byte]uint64),
 	}
 	go func() {
 		b.Seqs, b.Err = p.seq(context.TODO(), Batch{Entries: b.Entries})
@@ -88,10 +91,20 @@ type batch struct {
 	Entries [][]byte
 	Done    chan struct{}
 	Seqs    []uint64
+	Hashes  map[[32]byte]uint64
 	Err     error
 }
 
 func (b *batch) Add(e []byte) int {
+	hash := sha256.Sum256(e)
+	i, ok := b.Hashes[hash]
+	if ok {
+		// TODO: not a great int conversion
+		return int(i)
+	}
 	b.Entries = append(b.Entries, e)
-	return len(b.Entries) - 1
+	// TODO: might not need to have - 1
+	l := len(b.Entries) - 1
+	b.Hashes[hash] = uint64(l)
+	return l
 }

@@ -520,7 +520,7 @@ type latencySequenceNolock struct {
 	transaction time.Duration
 }
 
-func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (uint64, error) {
+func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) ([]uint64, error) {
 	s.ddbMutex.Lock()
 	defer func() {
 		s.ddbMutex.Unlock()
@@ -530,8 +530,17 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	startTime := t
 	seq, err := s.ReadSequencedIndex()
 	if err != nil {
-		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)
+		return nil, fmt.Errorf("can't read the current sequenced index: %v", err)
 	}
+
+	keys := make([]string, len(batch.Entries))
+	ret := make([]uint64, len(batch.Entries))
+	for i, e := range batch.Entries {
+		hashB := sha256.Sum256(e)
+		key := base64.StdEncoding.EncodeToString(hashB[:])
+		keys[i] = key
+	}
+	dedupedIndex, err := s.ContainsHashes(ctx, keys)
 
 	l.readIdx = time.Since(t)
 	t = time.Now()
@@ -540,14 +549,20 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	offset := entriesInBundle
 	writes := []dynamodbtypes.TransactWriteItem{}
 	values := []string{}
-	for _, e := range batch.Entries {
+	for i, e := range batch.Entries {
+		if idx, ok := dedupedIndex[keys[i]]; ok {
+			ret[i] = idx
+			continue
+		}
 		values = append(values, string(e))
 		entriesInBundle++
 		if entriesInBundle == uint64(s.params.EntryBundleSize) || len(values) == s.sequencedBundleMaxSize {
 			entries, err := attributevalue.MarshalList(values)
 			if err != nil {
-				return 0, fmt.Errorf("error marshaling entries list: %v", err)
+				return nil, fmt.Errorf("error marshaling entries list: %v", err)
 			}
+			ret[i] = seq
+			seq++
 			writes = append(writes, dynamodbtypes.TransactWriteItem{
 				Put: &dynamodbtypes.Put{
 					Item: map[string]dynamodbtypes.AttributeValue{
@@ -577,7 +592,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	if len(values) != 0 {
 		entries, err := attributevalue.MarshalList(values)
 		if err != nil {
-			return 0, fmt.Errorf("error marshaling entries list: %v", err)
+			return nil, fmt.Errorf("error marshaling entries list: %v", err)
 		}
 		writes = append(writes, dynamodbtypes.TransactWriteItem{
 			Put: &dynamodbtypes.Put{
@@ -637,7 +652,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	l.transaction = time.Since(t)
 	if err != nil {
 		klog.V(1).Infof("couldnt' write sequencing transation: %v", err)
-		return 0, err
+		return nil, err
 	}
 	tR, tW := 0.0, 0.0
 	for _, c := range output.ConsumedCapacity {
@@ -650,7 +665,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	}
 	klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v", tR, tW)
 	klog.V(1).Infof("sequenceBatchNoLock: %v [readIDx: %v, transaction: %v]", time.Since(startTime), l.readIdx, l.transaction)
-	return seq, nil
+	return ret, nil
 }
 
 type latencyIntegration struct {

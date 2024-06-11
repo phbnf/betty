@@ -87,5 +87,5 @@ type batch struct {
 
 func (b *batch) Add(e []byte) int {
 	b.Entries = append(b.Entries, e)
-	return len(b.Entries)
+	return len(b.Entries) - 1
 }

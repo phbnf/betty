@@ -62,7 +62,8 @@ func (p *Pool) Add(e []byte) (uint64, error) {
 	p.Unlock()
 	<-b.Done
 	if len(b.Seqs) > n+1 {
-		return b.Seqs[n], b.Err
+		hash := sha256.Sum256(e)
+		return b.Seqs[b.Hashes[hash]], b.Err
 	}
 	return 0, b.Err
 }
@@ -102,9 +103,9 @@ func (b *batch) Add(e []byte) int {
 		// TODO: not a great int conversion
 		return int(i)
 	}
+	l := len(b.Entries)
 	b.Entries = append(b.Entries, e)
 	// TODO: might not need to have - 1
-	l := len(b.Entries) - 1
 	b.Hashes[hash] = uint64(l)
 	return l
 }

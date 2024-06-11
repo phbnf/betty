@@ -356,6 +356,98 @@ func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, e
 	return 0, false, nil
 }
 
+func (s *Storage) ContainsHashes(ctx context.Context, keys []string) (map[string]uint64, error) {
+	t := time.Now()
+	defer func() {
+		klog.V(1).Infof("took %v to check if a duplicate exists", time.Since(t))
+	}()
+	ret := map[string]uint64{}
+
+	allRequests := []map[string]dynamodbtypes.AttributeValue{}
+	for _, k := range keys {
+		av := map[string]dynamodbtypes.AttributeValue{
+			"Hash": &dynamodbtypes.AttributeValueMemberS{
+				Value: k,
+			},
+		}
+		allRequests = append(allRequests, av)
+	}
+	input := &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]dynamodbtypes.KeysAndAttributes{
+			dedupTable: dynamodbtypes.KeysAndAttributes{Keys: allRequests},
+		},
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
+	}
+
+	t1 := time.Now()
+	output, err := s.ddb.BatchGetItem(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't check that the log contains %v: %v", keys, err)
+	} else if len(output.Responses) > 0 {
+		// TODO check for element inclusion first
+		for _, r := range output.Responses[dedupTable] {
+			idx := &struct {
+				Hash string
+				Idx  uint64
+			}{}
+			if err := attributevalue.UnmarshalMap(r, idx); err != nil {
+				return nil, fmt.Errorf("couldn't check that the log contains %v: %v", keys, err)
+			}
+			klog.V(2).Infof("Found matching entry in the log at index: %d", idx.Idx)
+			ret[idx.Hash] = idx.Idx
+		}
+	}
+	klog.V(1).Infof("ContainsHashes - C: %v", output.ConsumedCapacity)
+	klog.V(1).Infof("took %v to do a BatchGetItem duplicate query", time.Since(t1))
+	return ret, nil
+}
+
+func (s *Storage) DedupHashes(ctx context.Context, map [string]uint64) (map[string]uint64, error) {
+	t := time.Now()
+	defer func() {
+		klog.V(1).Infof("took %v to check if a duplicate exists", time.Since(t))
+	}()
+	ret := map[string]uint64{}
+
+	allRequests := []map[string]dynamodbtypes.AttributeValue{}
+	for _, k := range keys {
+		av := map[string]dynamodbtypes.AttributeValue{
+			"Hash": &dynamodbtypes.AttributeValueMemberS{
+				Value: k,
+			},
+		}
+		allRequests = append(allRequests, av)
+	}
+	input := &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]dynamodbtypes.KeysAndAttributes{
+			dedupTable: dynamodbtypes.KeysAndAttributes{Keys: allRequests},
+		},
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
+	}
+
+	t1 := time.Now()
+	output, err := s.ddb.BatchGetItem(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't check that the log contains %v: %v", keys, err)
+	} else if len(output.Responses) > 0 {
+		// TODO check for element inclusion first
+		for _, r := range output.Responses[dedupTable] {
+			idx := &struct {
+				Hash string
+				Idx  uint64
+			}{}
+			if err := attributevalue.UnmarshalMap(r, idx); err != nil {
+				return nil, fmt.Errorf("couldn't check that the log contains %v: %v", keys, err)
+			}
+			klog.V(2).Infof("Found matching entry in the log at index: %d", idx.Idx)
+			ret[idx.Hash] = idx.Idx
+		}
+	}
+	klog.V(1).Infof("ContainsHashes - C: %v", output.ConsumedCapacity)
+	klog.V(1).Infof("took %v to do a BatchGetItem duplicate query", time.Since(t1))
+	return ret, nil
+}
+
 // sequenceBatchAndIntegrate writes the entries from the provided batch into the entry bundle files of the log.
 //
 // This func starts filling entries bundles at the next available slot in the log, ensuring that the

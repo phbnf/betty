@@ -81,6 +81,7 @@ func (p *Pool) flushWithLock() {
 type batch struct {
 	Entries  [][]byte
 	Done     chan struct{}
+	Hashes   map[[32]byte]uint64
 	FirstSeq uint64
 	Err      error
 }

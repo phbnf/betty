@@ -59,7 +59,10 @@ func (p *Pool) Add(e []byte) (uint64, error) {
 	}
 	p.Unlock()
 	<-b.Done
-	return b.Seqs[n], b.Err
+	if len(b.Seqs) > n+1 {
+		return b.Seqs[n], b.Err
+	}
+	return 0, b.Err
 }
 
 func (p *Pool) flushWithLock() {

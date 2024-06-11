@@ -13,7 +13,7 @@ type Batch struct {
 // SequenceFunc knows how to assign contiguous sequence numbers to the entries in Batch.
 // Returns the sequence number of the first entry, or an error.
 // Must not return successfully until the assigned sequence numbers are durably stored.
-type SequenceFunc func(context.Context, Batch) (uint64, error)
+type SequenceFunc func(context.Context, Batch) ([]uint64, error)
 
 func NewPool(bufferSize int, maxAge time.Duration, s SequenceFunc) *Pool {
 	return &Pool{
@@ -57,7 +57,7 @@ func (p *Pool) Add(e []byte) (uint64, error) {
 	}
 	p.Unlock()
 	<-b.Done
-	return b.FirstSeq + uint64(n), b.Err
+	return b.Seqs[n], b.Err
 }
 
 func (p *Pool) flushWithLock() {
@@ -73,17 +73,16 @@ func (p *Pool) flushWithLock() {
 		Done: make(chan struct{}),
 	}
 	go func() {
-		b.FirstSeq, b.Err = p.seq(context.TODO(), Batch{Entries: b.Entries})
+		b.Seqs, b.Err = p.seq(context.TODO(), Batch{Entries: b.Entries})
 		close(b.Done)
 	}()
 }
 
 type batch struct {
-	Entries  [][]byte
-	Done     chan struct{}
-	Hashes   map[[32]byte]uint64
-	FirstSeq uint64
-	Err      error
+	Entries [][]byte
+	Done    chan struct{}
+	Seqs    []uint64
+	Err     error
 }
 
 func (b *batch) Add(e []byte) int {

@@ -385,6 +385,7 @@ func (s *Storage) ContainsHashes(ctx context.Context, keys []string) (map[string
 	t1 := time.Now()
 	output, err := s.ddb.BatchGetItem(ctx, input)
 	if err != nil {
+		fmt.Println("Got an error doing BatchGetItem")
 		return nil, fmt.Errorf("couldn't check that the log contains %v: %v", keys, err)
 	} else if len(output.Responses) > 0 {
 		// TODO check for element inclusion first

@@ -467,7 +467,7 @@ type latencySequence struct {
 	writeIdx time.Duration
 }
 
-func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
+func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) ([]uint64, error) {
 	t := time.Now()
 	startTime := t
 	l := latencySequence{}
@@ -489,19 +489,20 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 
 	seq, err := s.ReadSequencedIndex()
 	if err != nil {
-		return 0, fmt.Errorf("can't read the current sequenced index: %v", err)
+		return nil, fmt.Errorf("can't read the current sequenced index: %v", err)
 	}
 	l.readIdx = time.Since(t)
 	t = time.Now()
 
-	if err := s.sequenceEntriesAsBundlesSlices(ctx, batch.Entries, seq); err != nil {
-		return 0, fmt.Errorf("couldn't sequence batch: %v", err)
+	ret, err := s.sequenceEntriesAsBundlesSlices(ctx, batch.Entries, seq)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't sequence batch: %v", err)
 	}
 	l.stage = time.Since(t)
 	t = time.Now()
 
 	if err := s.WriteSequencedIndex(seq + uint64(len(batch.Entries))); err != nil {
-		return 0, fmt.Errorf("couldn't commit to the sequenced Index: %v", err)
+		return nil, fmt.Errorf("couldn't commit to the sequenced Index: %v", err)
 	}
 	l.writeIdx = time.Since(t)
 
@@ -512,7 +513,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		l.stage,
 		l.writeIdx,
 	)
-	return seq, nil
+	return ret, nil
 }
 
 type latencySequenceNolock struct {
@@ -541,6 +542,9 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		keys[i] = key
 	}
 	dedupedIndex, err := s.ContainsHashes(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("ContainsHashes: %v", err)
+	}
 
 	l.readIdx = time.Since(t)
 	t = time.Now()
@@ -784,20 +788,38 @@ type BatchSlice struct {
 	Entries []string
 }
 
-func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries [][]byte, firstIdx uint64) error {
+func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries [][]byte, firstIdx uint64) ([]uint64, error) {
 	// done by reading the bundle form the table at all times, and not from this function
 	bundleIndex, entriesInBundle := firstIdx/uint64(s.params.EntryBundleSize), firstIdx%uint64(s.params.EntryBundleSize)
 	offset := entriesInBundle
+	seq := firstIdx
 	bundleSlice := [][]byte{}
 	// Add new entries to the bundle
-	for _, e := range entries {
+	keys := make([]string, len(entries))
+	ret := make([]uint64, len(entries))
+	for i, e := range entries {
+		hashB := sha256.Sum256(e)
+		key := base64.StdEncoding.EncodeToString(hashB[:])
+		keys[i] = key
+	}
+	dedupedIndex, err := s.ContainsHashes(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("ContainsHashes: %v", err)
+	}
+	for i, e := range entries {
 		encoded := []byte(base64.StdEncoding.EncodeToString(e))
+		if idx, ok := dedupedIndex[keys[i]]; ok {
+			ret[i] = idx
+			continue
+		}
 		bundleSlice = append(bundleSlice, encoded)
 		entriesInBundle++
+		ret[i] = seq
+		seq++
 		if entriesInBundle == uint64(s.params.EntryBundleSize) || len(bundleSlice) == s.sequencedBundleMaxSize {
 			//  This bundle is full, so we need to write it out...
 			if err := s.stageBundleSlice(ctx, bundleSlice, bundleIndex, offset); err != nil {
-				return err
+				return nil, err
 			}
 			// ... and prepare the next entry bundle for any remaining entries in the batch
 			if entriesInBundle == uint64(s.params.EntryBundleSize) {
@@ -814,10 +836,10 @@ func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries []
 	// this needs writing out too.
 	if entriesInBundle > 0 {
 		if err := s.stageBundleSlice(ctx, bundleSlice, bundleIndex, offset); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return ret, nil
 }
 
 func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundleIdx uint64, offset uint64) error {

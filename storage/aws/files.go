@@ -534,6 +534,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	l := latencySequenceNolock{}
 	startTime := t
 	seq, err := s.ReadSequencedIndex()
+	currSeq := seq
 	if err != nil {
 		return nil, fmt.Errorf("can't read the current sequenced index: %v", err)
 	}
@@ -567,8 +568,8 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 			continue
 		}
 		values = append(values, string(e))
-		ret[i] = seq
-		seq++
+		ret[i] = currSeq
+		currSeq++
 		entriesInBundle++
 		if entriesInBundle == uint64(s.params.EntryBundleSize) || len(values) == s.sequencedBundleMaxSize {
 			entries, err := attributevalue.MarshalList(values)

@@ -892,7 +892,7 @@ func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundle
 func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx uint64, nBundle int) ([]Batch, bool, error) {
 	// TODO: handle more bundles than one at a time
 	// Right now, it just just reads a isngle bundle at a time
-	keyCond := expression.Key("Idx").Equal(expression.Value(startBundleIdx))
+	keyCond := expression.Key("Idx").Between(expression.Value(startBundleIdx), expression.Value(startBundleIdx+uint64(nBundle)))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
 	if err != nil {
 		klog.Fatalf("Cannot create dynamodb condition: %v", err)

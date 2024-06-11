@@ -66,6 +66,8 @@ type Storage struct {
 
 	sequencedBundleMaxSize   int
 	integrateBundleBatchSize int
+
+	dedupSeq bool
 }
 
 // NewTreeFunc is the signature of a function which receives information about newly integrated trees.
@@ -75,7 +77,7 @@ type NewTreeFunc func(size uint64, root []byte) ([]byte, error)
 type CurrentTreeFunc func([]byte) (uint64, []byte, error)
 
 // New creates a new S3 and DDB Storage
-func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, batchSize int, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, sequencedBundleMaxSize, integrateBundleBatchSize int, withlock bool) *Storage {
+func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, batchSize int, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, sequencedBundleMaxSize, integrateBundleBatchSize int, withlock, dedupSeq bool) *Storage {
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		klog.V(1).Infof("Couldn't load default configuration: %v", err)
@@ -96,6 +98,7 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 		ddb:                      *ddbClient,
 		integrateBundleBatchSize: integrateBundleBatchSize,
 		sequencedBundleMaxSize:   sequencedBundleMaxSize,
+		dedupSeq:                 dedupSeq,
 	}
 
 	if withlock {
@@ -541,9 +544,13 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		key := base64.StdEncoding.EncodeToString(hashB[:])
 		keys[i] = key
 	}
-	dedupedIndex, err := s.ContainsHashes(ctx, keys)
-	if err != nil {
-		return nil, fmt.Errorf("ContainsHashes: %v", err)
+	dedupedIndex := make(map[string]uint64)
+	if s.dedupSeq {
+		var err error
+		dedupedIndex, err = s.ContainsHashes(ctx, keys)
+		if err != nil {
+			return nil, fmt.Errorf("ContainsHashes: %v", err)
+		}
 	}
 
 	l.readIdx = time.Since(t)
@@ -802,9 +809,13 @@ func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries []
 		key := base64.StdEncoding.EncodeToString(hashB[:])
 		keys[i] = key
 	}
-	dedupedIndex, err := s.ContainsHashes(ctx, keys)
-	if err != nil {
-		return nil, fmt.Errorf("ContainsHashes: %v", err)
+	dedupedIndex := make(map[string]uint64)
+	if s.dedupSeq {
+		var err error
+		dedupedIndex, err = s.ContainsHashes(ctx, keys)
+		if err != nil {
+			return nil, fmt.Errorf("ContainsHashes: %v", err)
+		}
 	}
 	for i, e := range entries {
 		encoded := []byte(base64.StdEncoding.EncodeToString(e))

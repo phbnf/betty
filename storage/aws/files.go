@@ -364,7 +364,7 @@ func (s *Storage) ContainsHashes(ctx context.Context, keys []string) (map[string
 	defer func() {
 		klog.V(1).Infof("took %v to check if a duplicate exists", time.Since(t))
 	}()
-	ret := map[string]uint64{}
+	ret := make(map[string]uint64)
 
 	allRequests := []map[string]dynamodbtypes.AttributeValue{}
 	for _, k := range keys {

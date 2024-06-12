@@ -3,6 +3,7 @@ package writer
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -59,11 +60,13 @@ func (p *Pool) Add(e []byte) (uint64, error) {
 	}
 	p.Unlock()
 	<-b.Done
-	if len(b.Seqs) > n+1 {
-		hash := sha256.Sum256(e)
-		return b.Seqs[b.Hashes[hash]], b.Err
+	hash := sha256.Sum256(e)
+	poolIdx := b.Hashes[hash]
+	if uint64(len(b.Seqs)) > poolIdx {
+		return b.Seqs[poolIdx], b.Err
+	} else {
+		return 0, fmt.Errorf("Pool.Add() index problem. b.Err: %v", b.Err)
 	}
-	return 0, b.Err
 }
 
 func (p *Pool) flushWithLock() {

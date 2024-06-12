@@ -579,6 +579,9 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 			writes = append(writes, dynamodbtypes.TransactWriteItem{
 				Put: &dynamodbtypes.Put{
 					Item: map[string]dynamodbtypes.AttributeValue{
+						"Logname": &dynamodbtypes.AttributeValueMemberS{
+							Value: s.path,
+						},
 						"Idx": &dynamodbtypes.AttributeValueMemberN{
 							Value: fmt.Sprintf("%d", bundleIndex),
 						},
@@ -610,6 +613,9 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		writes = append(writes, dynamodbtypes.TransactWriteItem{
 			Put: &dynamodbtypes.Put{
 				Item: map[string]dynamodbtypes.AttributeValue{
+					"Logname": &dynamodbtypes.AttributeValueMemberS{
+						Value: s.path,
+					},
 					"Idx": &dynamodbtypes.AttributeValueMemberN{
 						Value: fmt.Sprintf("%d", bundleIndex),
 					},
@@ -861,10 +867,12 @@ func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundle
 		value[i] = string(e)
 	}
 	item := struct {
+		Logname string
 		Idx     uint64
 		Offset  uint64
 		Entries []string
 	}{
+		Logname: s.path,
 		Idx:     bundleIdx,
 		Offset:  offset,
 		Entries: value,
@@ -890,10 +898,9 @@ func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundle
 }
 
 func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx uint64, nBundle int) ([]Batch, bool, error) {
-	// TODO: handle more bundles than one at a time
-	// Right now, it just just reads a isngle bundle at a time
-	keyCond := expression.Key("Idx").Between(expression.Value(startBundleIdx), expression.Value(startBundleIdx+uint64(nBundle)))
+	keyCond := expression.Key("Logname").Equal(expression.Value(s.path)).And(expression.Key("Idx").GreaterThanEqual(expression.Value(startBundleIdx)))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
+
 	if err != nil {
 		klog.Fatalf("Cannot create dynamodb condition: %v", err)
 	}
@@ -929,7 +936,8 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 		batches[0].Entries = append(batches[0].Entries, slice.Entries...)
 	}
 
-	return batches, (len(batches[0].Entries) == s.params.EntryBundleSize), nil
+	// TODO: change this this won't work anymore since there is one row per bundle slice
+	return batches, int(output.ScannedCount) > nBundle, nil
 }
 
 func (s *Storage) deleteSequencedBundles(ctx context.Context, start, len uint64) error {

@@ -18,15 +18,15 @@ import (
 )
 
 var (
-	path                     = flag.String("path", "betty", "Path to log root diretory")
-	batchSize                = flag.Int("batch_size", 1, "Size of batch before flushing")
-	bundleSize               = flag.Int("bundle_size", 256, "Size of bundles written to S3")
-	sequencedBundleMaxSize   = flag.Int("sequence_bundle_size", 100, "Maximum number of entries to store togerther in the sequencing table")
-	batchMaxAge              = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
-	integrateBundleBatchSize = flag.Int("integrate_bundle_batch_size", 4, "Max number of bundles to integrate at a time")
-	sequenceWithLock         = flag.Bool("sequence_with_lock", false, "Whether to use a lock for sequencing")
-	dedupEntries             = flag.Bool("dedup_entries", false, "Whether to deduplicate entries before sequencing")
-	dedupEntriesSeq          = flag.Bool("dedup_entries_seq", false, "Whether to deduplicate entries at sequencing")
+	path                          = flag.String("path", "betty", "Path to log root diretory")
+	batchSize                     = flag.Int("batch_size", 1, "Size of batch before flushing")
+	bundleSize                    = flag.Int("bundle_size", 256, "Size of bundles written to S3")
+	sequencedBundleMaxSize        = flag.Int("sequence_bundle_size", 100, "Maximum number of entries to store togerther in the sequencing table")
+	batchMaxAge                   = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
+	integrateBundleSliceBatchSize = flag.Int("integrate_bundle_slice_batch_size", 4, "Max number of bundles to integrate at a time")
+	sequenceWithLock              = flag.Bool("sequence_with_lock", false, "Whether to use a lock for sequencing")
+	dedupEntries                  = flag.Bool("dedup_entries", false, "Whether to deduplicate entries before sequencing")
+	dedupEntriesSeq               = flag.Bool("dedup_entries_seq", false, "Whether to deduplicate entries at sequencing")
 
 	listen = flag.String("listen", ":2024", "Address:port to listen on")
 
@@ -87,7 +87,7 @@ func main() {
 	ct := currentTree(vKey)
 	nt := newTree(*path, sKey)
 
-	s := aws.New(ctx, *path, log.Params{EntryBundleSize: *bundleSize}, *batchMaxAge, *batchSize, ct, nt, *bucketName, *sequencedBundleMaxSize, *integrateBundleBatchSize, *sequenceWithLock, *dedupEntriesSeq)
+	s := aws.New(ctx, *path, log.Params{EntryBundleSize: *bundleSize}, *batchMaxAge, *batchSize, ct, nt, *bucketName, *sequencedBundleMaxSize, *integrateBundleSliceBatchSize, *sequenceWithLock, *dedupEntriesSeq)
 	l := &latency{}
 
 	if _, err := s.ReadCheckpoint(); err != nil {

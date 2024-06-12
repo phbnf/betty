@@ -64,8 +64,8 @@ type Storage struct {
 	id        int64
 	ddb       dynamodb.Client
 
-	sequencedBundleMaxSize   int
-	integrateBundleBatchSize int
+	sequencedBundleMaxSize        int
+	integrateBundleSliceBatchSize int
 
 	dedupSeq bool
 }
@@ -77,7 +77,7 @@ type NewTreeFunc func(size uint64, root []byte) ([]byte, error)
 type CurrentTreeFunc func([]byte) (uint64, []byte, error)
 
 // New creates a new S3 and DDB Storage
-func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, batchSize int, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, sequencedBundleMaxSize, integrateBundleBatchSize int, withlock, dedupSeq bool) *Storage {
+func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, batchSize int, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, sequencedBundleMaxSize, integrateBundleSliceBatchSize int, withlock, dedupSeq bool) *Storage {
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		klog.V(1).Infof("Couldn't load default configuration: %v", err)
@@ -87,18 +87,18 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 	ddbClient := dynamodb.NewFromConfig(sdkConfig)
 
 	r := &Storage{
-		path:                     path,
-		params:                   params,
-		curTree:                  curTree,
-		newTree:                  newTree,
-		bucket:                   bucketName,
-		sdkConfig:                sdkConfig,
-		s3:                       *s3Client,
-		id:                       rand.Int63(),
-		ddb:                      *ddbClient,
-		integrateBundleBatchSize: integrateBundleBatchSize,
-		sequencedBundleMaxSize:   sequencedBundleMaxSize,
-		dedupSeq:                 dedupSeq,
+		path:                          path,
+		params:                        params,
+		curTree:                       curTree,
+		newTree:                       newTree,
+		bucket:                        bucketName,
+		sdkConfig:                     sdkConfig,
+		s3:                            *s3Client,
+		id:                            rand.Int63(),
+		ddb:                           *ddbClient,
+		integrateBundleSliceBatchSize: integrateBundleSliceBatchSize,
+		sequencedBundleMaxSize:        sequencedBundleMaxSize,
+		dedupSeq:                      dedupSeq,
 	}
 
 	if withlock {
@@ -723,7 +723,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	t = time.Now()
 
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
-	batches, more, err := s.getSequencedBundlesSlices(ctx, size/uint64(s.params.EntryBundleSize), s.integrateBundleBatchSize)
+	batches, more, err := s.getSequencedBundlesSlices(ctx, size/uint64(s.params.EntryBundleSize), s.integrateBundleSliceBatchSize)
 	if err != nil {
 		return false, fmt.Errorf("getSequencesBundles: %v", err)
 	}
@@ -897,7 +897,7 @@ func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundle
 	return nil
 }
 
-func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx uint64, nBundle int) ([]Batch, bool, error) {
+func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx uint64, nBundleSlices int) ([]Batch, bool, error) {
 	keyCond := expression.Key("Logname").Equal(expression.Value(s.path)).And(expression.Key("Idx").GreaterThanEqual(expression.Value(startBundleIdx)))
 	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
 
@@ -911,8 +911,8 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 		ExpressionAttributeNames:  expr.Names(),
 		TableName:                 aws.String(bundleSlicesTable),
 		ConsistentRead:            aws.Bool(true),
-		//Limit:                     aws.Int32(int32(nBundle) + 1),
-		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
+		Limit:                     aws.Int32(int32(nBundleSlices) + 1),
+		ReturnConsumedCapacity:    dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
 	output, err := s.ddb.Query(ctx, input)
@@ -936,8 +936,9 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 		batches[0].Entries = append(batches[0].Entries, slice.Entries...)
 	}
 
-	// TODO: change this this won't work anymore since there is one row per bundle slice
-	return batches, int(output.ScannedCount) > nBundle, nil
+	lastKey := output.LastEvaluatedKey
+
+	return batches, len(lastKey) > 0, nil
 }
 
 func (s *Storage) deleteSequencedBundles(ctx context.Context, start, len uint64) error {

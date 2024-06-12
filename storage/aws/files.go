@@ -98,6 +98,7 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 		ddb:                      *ddbClient,
 		integrateBundleBatchSize: integrateBundleBatchSize,
 		sequencedBundleMaxSize:   sequencedBundleMaxSize,
+		dedupSeq:                 dedupSeq,
 	}
 
 	if withlock {
@@ -136,8 +137,6 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 			}
 		}
 	}()
-
-	go r.Dedup(ctx)
 
 	return r
 }
@@ -688,7 +687,9 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v", tR, tW)
 	klog.V(1).Infof("sequenceBatchNoLock: %v [readIDx: %v, transaction: %v]", time.Since(startTime), l.readIdx, l.transaction)
 
-	go s.DedupHashes(ctx, newlySequenced)
+	if s.dedupSeq {
+		go s.DedupHashes(ctx, newlySequenced)
+	}
 	return ret, nil
 }
 

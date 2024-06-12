@@ -560,6 +560,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 
 	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
 	offset := entriesInBundle
+	klog.V(1).Infof("Initial value of offset: %d", offset)
 	writes := []dynamodbtypes.TransactWriteItem{}
 	values := []string{}
 	for i, e := range batch.Entries {
@@ -651,6 +652,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		},
 	}
 	input.TransactItems = append(input.TransactItems, writes...)
+	klog.V(1).Infof("write value of offset: %d", offset)
 	output, err := s.ddb.TransactWriteItems(ctx, input)
 	maxTries := 10
 	for retry := 1; err != nil && retry < maxTries; retry++ {

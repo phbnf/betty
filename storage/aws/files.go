@@ -554,6 +554,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 			return nil, fmt.Errorf("ContainsHashes: %v", err)
 		}
 	}
+	newlySequenced := make(map[string]uint64)
 
 	l.readIdx = time.Since(t)
 	t = time.Now()
@@ -568,6 +569,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 			ret[i] = idx
 			continue
 		}
+		newlySequenced[keys[i]] = currSeq
 		values = append(values, string(e))
 		ret[i] = currSeq
 		currSeq++
@@ -680,6 +682,10 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 	}
 	klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v", tR, tW)
 	klog.V(1).Infof("sequenceBatchNoLock: %v [readIDx: %v, transaction: %v]", time.Since(startTime), l.readIdx, l.transaction)
+	// TODO: call writeHashes
+	if err := s.DedupHashes(ctx, newlySequenced); err != nil {
+		return ret, fmt.Errorf("DedupHashes(): %v", err)
+	}
 	return ret, nil
 }
 

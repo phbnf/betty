@@ -719,7 +719,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	t = time.Now()
 
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
-	batches, more, err := s.getSequencedBundlesSlices(ctx, size/uint64(s.params.EntryBundleSize), s.integrateBundleBatchSize)
+	batches, more, err := s.getSequencedBundlesSlices(ctx, size/uint64(s.params.EntryBundleSize), size%uint64(s.params.EntryBundleSize), s.integrateBundleBatchSize)
 	if err != nil {
 		return false, fmt.Errorf("getSequencesBundles: %v", err)
 	}
@@ -795,7 +795,6 @@ type Batch struct {
 type BatchSlice struct {
 	Idx     uint64
 	Offset  uint64
-	Len     int
 	Entries []string
 }
 
@@ -891,47 +890,63 @@ func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundle
 	return nil
 }
 
-func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx uint64, nBundle int) ([]Batch, bool, error) {
-	// TODO: handle more bundles than one at a time
-	// Right now, it just just reads a isngle bundle at a time
-	keyCond := expression.Key("Idx").Equal(expression.Value(startBundleIdx))
-	expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
-	if err != nil {
-		klog.Fatalf("Cannot create dynamodb condition: %v", err)
+func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx uint64, offset uint64, nBundle int) ([]Batch, bool, error) {
+	item := struct {
+		Idx    uint64
+		Offset uint64
+	}{
+		Idx:    startBundleIdx,
+		Offset: offset,
 	}
 
-	input := &dynamodb.QueryInput{
-		KeyConditionExpression:    expr.KeyCondition(),
-		ExpressionAttributeValues: expr.Values(),
-		ExpressionAttributeNames:  expr.Names(),
-		TableName:                 aws.String(bundleSlicesTable),
-		ConsistentRead:            aws.Bool(true),
-		//Limit:                     aws.Int32(int32(nBundle) + 1),
+	av, err := attributevalue.MarshalMap(item)
+	if err != nil {
+		klog.Fatalf("Got error marshalling key to delete bundles: %s", err)
+	}
+
+	input := &dynamodb.ScanInput{
+		ExclusiveStartKey:      av,
+		TableName:              aws.String(bundleSlicesTable),
+		ConsistentRead:         aws.Bool(true),
+		Limit:                  aws.Int32(int32(nBundle) + 1),
 		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
-	output, err := s.ddb.Query(ctx, input)
+	output, err := s.ddb.Scan(ctx, input)
 	if err != nil {
 		return nil, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 	}
 	klog.V(1).Infof("getSequencedBundlesSlices - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)
-	batches := make([]Batch, 1)
+
 	batchSlices := []BatchSlice{}
 	if len(output.Items) == 0 {
-		return batches, false, nil
+		return nil, false, nil
 	}
+	batches := []Batch{}
 	if err := attributevalue.UnmarshalListOfMaps(output.Items, &batchSlices); err != nil {
 		return nil, false, fmt.Errorf("can't unmarshall entries: %v", err)
 	}
 	for _, slice := range batchSlices {
+		if uint64(len(batches)) < slice.Idx-startBundleIdx+1 {
+			batches = append(batches, Batch{Idx: slice.Idx, Logname: s.path})
+		}
 		klog.V(2).Infof("fetched bundle starting at %d with offset %d", slice.Idx, slice.Offset)
-		batches[0].Logname = s.path
-		batches[0].Idx = slice.Idx
-		batches[0].Entries = append(batches[0].Entries, slice.Entries...)
+		// TODO(phboneff): dangerous conversion
+		idx := int(slice.Idx - startBundleIdx)
+		batches[idx].Entries = append(batches[idx].Entries, slice.Entries...)
 	}
 
-	return batches, (len(batches[0].Entries) == s.params.EntryBundleSize), nil
+	lastKey := struct {
+		Idx    uint64
+		Offset uint64
+	}{}
+	if err := attributevalue.UnmarshalMap(output.LastEvaluatedKey, lastKey); err != nil {
+		return nil, false, fmt.Errorf("couldn't unmarshal the last evaluated key: %v", err)
+	}
+	klog.V(1).Infof("getSequencedBundlesSlices last evaluated key: %+v", lastKey)
+
+	return batches, len(output.LastEvaluatedKey) > 0, nil
 }
 
 func (s *Storage) deleteSequencedBundles(ctx context.Context, start, len uint64) error {

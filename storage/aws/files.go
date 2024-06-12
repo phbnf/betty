@@ -426,19 +426,23 @@ func (s *Storage) DedupHashes(ctx context.Context, kv map[string]uint64) error {
 		}
 		allRequests = append(allRequests, dynamodbtypes.WriteRequest{PutRequest: av})
 	}
-	input := &dynamodb.BatchWriteItemInput{
-		RequestItems: map[string][]dynamodbtypes.WriteRequest{
-			dedupTable: allRequests,
-		},
-	}
 
-	t1 := time.Now()
-	output, err := s.ddb.BatchWriteItem(ctx, input)
-	if err != nil {
-		return fmt.Errorf("couldn't write new dedup entries %v: %v", kv, err)
+	nRequests := len(allRequests)
+	for i := 0; i < len(allRequests); i += 25 {
+		input := &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]dynamodbtypes.WriteRequest{
+				dedupTable: allRequests[i:min(i+25, nRequests)],
+			},
+		}
+
+		t1 := time.Now()
+		output, err := s.ddb.BatchWriteItem(ctx, input)
+		if err != nil {
+			return fmt.Errorf("couldn't write new dedup entries %v: %v", kv, err)
+		}
+		klog.V(1).Infof("DedupHashes - C: %v", output.ConsumedCapacity)
+		klog.V(1).Infof("took %v to do a BatchWriteItem duplicate query", time.Since(t1))
 	}
-	klog.V(1).Infof("DedupHashes - C: %v", output.ConsumedCapacity)
-	klog.V(1).Infof("took %v to do a BatchWriteItem duplicate query", time.Since(t1))
 	return nil
 }
 

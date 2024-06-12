@@ -682,7 +682,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 			tW += *c.WriteCapacityUnits
 		}
 	}
-	klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v", tR, tW)
+	klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v for %v entries", tR, tW, len(batch.Entries)-len(dedupedIndex))
 	klog.V(1).Infof("sequenceBatchNoLock: %v [readIDx: %v, transaction: %v]", time.Since(startTime), l.readIdx, l.transaction)
 	return ret, nil
 }

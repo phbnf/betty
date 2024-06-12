@@ -937,6 +937,12 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 	}
 
 	lastKey := output.LastEvaluatedKey
+	keys := &struct {
+		Logname string
+		Idx     uint64
+	}{}
+	parsedLastKey := attributevalue.UnmarshalMap(lastKey, keys)
+	klog.V(1).Infof("parsedLastKey: %+v", parsedLastKey)
 
 	return batches, len(lastKey) > 0, nil
 }

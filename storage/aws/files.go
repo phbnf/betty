@@ -67,7 +67,8 @@ type Storage struct {
 	sequencedBundleMaxSize   int
 	integrateBundleBatchSize int
 
-	dedupSeq bool
+	dedupSeq    bool
+	intWithLock bool
 }
 
 // NewTreeFunc is the signature of a function which receives information about newly integrated trees.
@@ -77,7 +78,7 @@ type NewTreeFunc func(size uint64, root []byte) ([]byte, error)
 type CurrentTreeFunc func([]byte) (uint64, []byte, error)
 
 // New creates a new S3 and DDB Storage
-func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, batchSize int, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, sequencedBundleMaxSize, integrateBundleBatchSize int, withlock, dedupSeq bool) *Storage {
+func New(ctx context.Context, path string, params log.Params, batchMaxAge time.Duration, batchSize int, curTree CurrentTreeFunc, newTree NewTreeFunc, bucketName string, sequencedBundleMaxSize, integrateBundleBatchSize int, seqWithLock, intWithLock, dedupSeq bool) *Storage {
 	sdkConfig, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		klog.V(1).Infof("Couldn't load default configuration: %v", err)
@@ -99,9 +100,10 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 		integrateBundleBatchSize: integrateBundleBatchSize,
 		sequencedBundleMaxSize:   sequencedBundleMaxSize,
 		dedupSeq:                 dedupSeq,
+		intWithLock:              intWithLock,
 	}
 
-	if withlock {
+	if seqWithLock {
 		r.pool = writer.NewPool(batchSize, batchMaxAge, r.sequenceBatch)
 	} else {
 		r.pool = writer.NewPool(batchSize, batchMaxAge, r.sequenceBatchNoLock)
@@ -592,16 +594,19 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	l := latencyIntegration{}
 	t := time.Now()
 	startTime := t
-	s.Lock()
-	if err := s.lockAWS(lockS3Table); err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := s.unlockAWS(lockS3Table); err != nil {
+
+	if s.intWithLock {
+		s.Lock()
+		if err := s.lockAWS(lockS3Table); err != nil {
 			panic(err)
 		}
-		s.Unlock()
-	}()
+		defer func() {
+			if err := s.unlockAWS(lockS3Table); err != nil {
+				panic(err)
+			}
+			s.Unlock()
+		}()
+	}
 
 	l.lock = time.Since(t)
 	t = time.Now()

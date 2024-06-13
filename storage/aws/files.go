@@ -731,16 +731,16 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	l := latencyIntegration{}
 	t := time.Now()
 	startTime := t
-	s.Lock()
-	if err := s.lockAWS(lockS3Table); err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := s.unlockAWS(lockS3Table); err != nil {
-			panic(err)
-		}
-		s.Unlock()
-	}()
+	//s.Lock()
+	//if err := s.lockAWS(lockS3Table); err != nil {
+	//	panic(err)
+	//}
+	//defer func() {
+	//	if err := s.unlockAWS(lockS3Table); err != nil {
+	//		panic(err)
+	//	}
+	//	s.Unlock()
+	//}()
 
 	l.lock = time.Since(t)
 	t = time.Now()

@@ -244,6 +244,7 @@ func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
 	return idx, nil
 }
 
+// ContainsHashes looks for indexes matching keys in dedupTable
 func (s *Storage) ContainsHashes(ctx context.Context, keys []string) (map[string]uint64, error) {
 	t := time.Now()
 	defer func() {
@@ -303,6 +304,7 @@ func (s *Storage) ContainsHashes(ctx context.Context, keys []string) (map[string
 	return ret, nil
 }
 
+// DedupHashes store hashes and their matching index in dedupTable
 func (s *Storage) DedupHashes(ctx context.Context, kv map[string]uint64) error {
 	t := time.Now()
 	defer func() {
@@ -363,6 +365,7 @@ type latencySequence struct {
 	writeIdx time.Duration
 }
 
+// sequenceBatch sequences a batch placing a lock in DynamoDB
 func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) ([]uint64, error) {
 	t := time.Now()
 	startTime := t
@@ -417,6 +420,7 @@ type latencySequenceNolock struct {
 	transaction time.Duration
 }
 
+// sequencebatchNoLock sequenced a batch in DynamoDB as an atomic transaction without using locks
 func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) ([]uint64, error) {
 	s.ddbMutex.Lock()
 	defer func() {
@@ -590,6 +594,7 @@ type latencyIntegration struct {
 	delete      time.Duration
 }
 
+// Integrate dumps last entries from the sequenceTable to S3, and integrates them
 func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	l := latencyIntegration{}
 	t := time.Now()
@@ -630,7 +635,6 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	}
 	l.readBundle = time.Since(t)
 	t = time.Now()
-	//firstBundleIndex := batches[0].Idx
 
 	entries := make([][]byte, 0)
 	for _, b := range batches {
@@ -683,6 +687,7 @@ type BatchSlice struct {
 	Entries []string
 }
 
+// sequenceEntriesAsBundlesSlices splits a bundle into slices, dedupes entries, and writes them to the sequenceTable
 func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries [][]byte, firstIdx uint64) ([]uint64, error) {
 	// done by reading the bundle form the table at all times, and not from this function
 	bundleIndex, entriesInBundle := firstIdx/uint64(s.params.EntryBundleSize), firstIdx%uint64(s.params.EntryBundleSize)
@@ -741,6 +746,7 @@ func (s *Storage) sequenceEntriesAsBundlesSlices(ctx context.Context, entries []
 	return ret, nil
 }
 
+// stageBundleSlice stores a single slice in the sequence table
 func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundleIdx uint64, offset uint64) error {
 	value := make([]string, len(entries))
 	for i, e := range entries {
@@ -775,6 +781,7 @@ func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundle
 	return nil
 }
 
+// getSequencedBundlesSlices reads Bundles from the sequencedtable
 func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx uint64, nBundle int) ([]Batch, bool, error) {
 	// TODO: read bundles in paralell rater than sequencially
 	batches := make([]Batch, nBundle)
@@ -931,7 +938,6 @@ func (s *Storage) StoreTile(_ context.Context, level, index uint64, tile *api.Ti
 
 // WriteCheckpoint stores a raw log checkpoint.
 func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
-	// TODO(phboneff): make this write to DynamoDB instead
 	path := filepath.Join(s.path, layout.CheckpointPath)
 	size, _, _ := s.curTree(newCPRaw)
 	klog.V(2).Infof("Writting checkpoint of size %d\n", size)
@@ -943,7 +949,6 @@ func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 
 // Readcheckpoint returns the latest stored checkpoint.
 func (s *Storage) ReadCheckpoint() ([]byte, error) {
-	// TODO(phboneff): make this read from DynamoDB instead
 	return s.ReadFile(filepath.Join(s.path, layout.CheckpointPath))
 }
 

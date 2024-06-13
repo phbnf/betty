@@ -141,26 +141,6 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 	return r
 }
 
-func (s *Storage) IntegrationLoop(ctx context.Context, frequency time.Duration) {
-	t := time.NewTicker(5 * time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			more := true
-			for more {
-				var err error
-				more, err = s.Integrate(ctx)
-				if err != nil {
-					klog.V(1).Infof("r.Integrate(): %v", err)
-				}
-			}
-		}
-	}
-}
-
 type Lock struct {
 	Logname string `json:"logname"`
 	ID      int64  `json:"id"`
@@ -253,110 +233,13 @@ func (s *Storage) unlockAWS(table string) error {
 
 // Sequence commits to sequence numbers for an entry
 // Returns the sequence number assigned to the first entry in the batch, or an error.
-func (s *Storage) Sequence(ctx context.Context, b []byte, dedup bool) (uint64, error) {
+func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
 	var key string
-	if dedup {
-		hashB := sha256.Sum256(b)
-		key = base64.StdEncoding.EncodeToString(hashB[:])
-		idx, ok, err := s.ContainsHash(ctx, key)
-		if err != nil {
-			return 0, fmt.Errorf("can't check entry hashing to %s for deduplication: %v", key, err)
-		}
-		if ok {
-			return idx, nil
-		}
-	}
 	idx, err := s.pool.Add(b)
 	if err != nil {
 		klog.V(1).Infof("can't add %s to pool: %v", key, err)
 	}
-	if dedup {
-		go func() {
-			if err := s.AddHash(ctx, key, idx); err != nil {
-				klog.V(2).Infof("can't add entry hashing to %s for deduplication: %v", key, err)
-			}
-		}()
-	}
 	return idx, nil
-}
-
-type dedup struct {
-	Hash string
-	Idx  uint64
-}
-
-func (s *Storage) AddHash(ctx context.Context, key string, idx uint64) error {
-	item := dedup{
-		Hash: key,
-		Idx:  idx,
-	}
-	av, err := attributevalue.MarshalMap(item)
-	if err != nil {
-		return fmt.Errorf("got error marshalling new dedup value: %s", err)
-	}
-
-	input := &dynamodb.PutItemInput{
-		Item:                                av,
-		TableName:                           aws.String(dedupTable),
-		ConditionExpression:                 aws.String("attribute_not_exists(Idx)"),
-		ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureNone,
-		ReturnConsumedCapacity:              dynamodbtypes.ReturnConsumedCapacityTotal,
-	}
-
-	output, err := s.ddb.PutItem(ctx, input)
-	klog.V(1).Infof("addHash - R: %v, W: %v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
-	if err != nil {
-		// Means that the entry was submitted after we checked for dedup, but before sequencing
-		var ccf *dynamodbtypes.ConditionalCheckFailedException
-		if errors.As(err, &ccf) {
-			return nil
-		}
-		return fmt.Errorf("couldn't add index for key%v: %v", key, err)
-	}
-	return nil
-}
-
-func (s *Storage) ContainsHash(ctx context.Context, key string) (uint64, bool, error) {
-	t := time.Now()
-	defer func() {
-		klog.V(1).Infof("took %v to check if a duplicate exists", time.Since(t))
-	}()
-	ddbClient := s.ddb //dynamodb.NewFromConfig(s.sdkConfig)
-	item := struct {
-		Hash string
-	}{
-		Hash: key,
-	}
-	av, err := attributevalue.MarshalMap(item)
-	if err != nil {
-		return 0, false, fmt.Errorf("got error marshalling new dedup key: %s", err)
-	}
-
-	input := &dynamodb.GetItemInput{
-		Key:       av,
-		TableName: aws.String(dedupTable),
-		//ConsistentRead:       aws.Bool(true),
-		ProjectionExpression:   aws.String("Idx"),
-		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
-	}
-
-	t1 := time.Now()
-	output, err := ddbClient.GetItem(ctx, input)
-	klog.V(1).Infof("ContainsHash - R: %v, W: %v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
-	klog.V(1).Infof("took %v to do a GetItem duplicate query", time.Since(t1))
-	if err != nil {
-		return 0, false, fmt.Errorf("couldn't check that the log contains %v: %v", key, err)
-	} else if len(output.Item) > 0 {
-		idx := &struct {
-			Idx uint64
-		}{}
-		if err := attributevalue.UnmarshalMap(output.Item, idx); err != nil {
-			return 0, false, fmt.Errorf("couldn't check that the log contains %v: %v", key, err)
-		}
-		klog.V(2).Infof("Found matching entry in the log at index: %d", idx.Idx)
-		return idx.Idx, true, nil
-	}
-	return 0, false, nil
 }
 
 func (s *Storage) ContainsHashes(ctx context.Context, keys []string) (map[string]uint64, error) {
@@ -469,28 +352,6 @@ func (s *Storage) DedupHashes(ctx context.Context, kv map[string]uint64) error {
 		klog.V(1).Infof("took %v to do a BatchWriteItem duplicate query", time.Since(t1))
 	}
 	return nil
-}
-
-// sequenceBatchAndIntegrate writes the entries from the provided batch into the entry bundle files of the log.
-//
-// This func starts filling entries bundles at the next available slot in the log, ensuring that the
-// sequenced entries are contiguous from the zeroth entry (i.e left-hand dense).
-// We try to minimise the number of partially complete entry bundles by writing entries in chunks rather
-// than one-by-one.
-func (s *Storage) sequenceBatchAndIntegrate(ctx context.Context, batch writer.Batch) error {
-	_, err := s.sequenceBatch(ctx, batch)
-	if err != nil {
-		return fmt.Errorf("s.sequenceBatch(): %v", err)
-	}
-
-	more := true
-	for more {
-		more, err = s.Integrate(ctx)
-		if err != nil {
-			klog.V(1).Infof("s.Integrate(): %v", err)
-		}
-	}
-	return err
 }
 
 type latencySequence struct {
@@ -731,16 +592,16 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	l := latencyIntegration{}
 	t := time.Now()
 	startTime := t
-	//s.Lock()
-	//if err := s.lockAWS(lockS3Table); err != nil {
-	//	panic(err)
-	//}
-	//defer func() {
-	//	if err := s.unlockAWS(lockS3Table); err != nil {
-	//		panic(err)
-	//	}
-	//	s.Unlock()
-	//}()
+	s.Lock()
+	if err := s.lockAWS(lockS3Table); err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := s.unlockAWS(lockS3Table); err != nil {
+			panic(err)
+		}
+		s.Unlock()
+	}()
 
 	l.lock = time.Since(t)
 	t = time.Now()
@@ -791,24 +652,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("doIntegrate: %v", err)
 	}
 	l.integration = time.Since(t)
-	t = time.Now()
 
-	// TODO: delete entries we've read
-	// TODO: don't delete entries yet. This can be done asynchronously just keep track of the last sequenced index
-	// Then delete the bundles that we will never need to integrate again
-	//firstEntryIndex := firstBundleIndex * uint64(s.params.EntryBundleSize)
-	//fullBundles := (firstEntryIndex%uint64(s.params.EntryBundleSize) + uint64(len(entries))) / uint64(s.params.EntryBundleSize)
-	//klog.V(2).Infof("Will delete %d bundles from %d", fullBundles, firstBundleIndex)
-	//if err := s.deleteSequencedBundles(ctx, firstBundleIndex, fullBundles); err != nil {
-	//	return false, fmt.Errorf("deleteSequencedBundles(): err")
-	//}
-	//l.delete = time.Since(t)
-
-	//readCP      time.Duration
-	//readBundle  time.Duration
-	//serialize   time.Duration
-	//integration time.Duration
-	//delete      time.Duration
 	klog.V(1).Infof("Integrate: %v [lock: %v, readBundle %v, serialize %v, integration %v, delete %v]",
 		time.Since(startTime),
 		l.readCP,

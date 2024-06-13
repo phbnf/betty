@@ -401,7 +401,19 @@ func (s *Storage) ContainsHashes(ctx context.Context, keys []string) (map[string
 			ret[idx.Hash] = idx.Idx
 		}
 	}
-	klog.V(1).Infof("ContainsHashes - C: %v", output.ConsumedCapacity)
+	tC, tR, tW := 0.0, 0.0, 0.0
+	for _, c := range output.ConsumedCapacity {
+		if c.ReadCapacityUnits != nil {
+			tR += *c.ReadCapacityUnits
+		}
+		if c.WriteCapacityUnits != nil {
+			tW += *c.WriteCapacityUnits
+		}
+		if c.CapacityUnits != nil {
+			tC += *c.CapacityUnits
+		}
+	}
+	klog.V(1).Infof("ContainsHashes - C: %v, R: %v, W: %v", tC, tR, tW)
 	klog.V(1).Infof("took %v to do a BatchGetItem duplicate query", time.Since(t1))
 	return ret, nil
 }
@@ -433,6 +445,7 @@ func (s *Storage) DedupHashes(ctx context.Context, kv map[string]uint64) error {
 			RequestItems: map[string][]dynamodbtypes.WriteRequest{
 				dedupTable: allRequests[i:min(i+25, nRequests)],
 			},
+			ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 		}
 
 		t1 := time.Now()
@@ -440,7 +453,19 @@ func (s *Storage) DedupHashes(ctx context.Context, kv map[string]uint64) error {
 		if err != nil {
 			return fmt.Errorf("couldn't write new dedup entries %v: %v", kv, err)
 		}
-		klog.V(1).Infof("DedupHashes - C: %v", output.ConsumedCapacity)
+		tC, tR, tW := 0.0, 0.0, 0.0
+		for _, c := range output.ConsumedCapacity {
+			if c.ReadCapacityUnits != nil {
+				tR += *c.ReadCapacityUnits
+			}
+			if c.WriteCapacityUnits != nil {
+				tW += *c.WriteCapacityUnits
+			}
+			if c.CapacityUnits != nil {
+				tC += *c.CapacityUnits
+			}
+		}
+		klog.V(1).Infof("DedupHashes - C: %v, R: %v, W: %v", tC, tR, tW)
 		klog.V(1).Infof("took %v to do a BatchWriteItem duplicate query", time.Since(t1))
 	}
 	return nil

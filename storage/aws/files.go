@@ -658,6 +658,7 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	t = time.Now()
 
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to
+	// TODO: avoid fetching entries that we have already integrated
 	batches, more, err := s.getSequencedBundlesSlices(ctx, size/uint64(s.params.EntryBundleSize), s.integrateBundleBatchSize)
 	if err != nil {
 		return false, fmt.Errorf("getSequencesBundles: %v", err)
@@ -672,6 +673,10 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	entries := make([][]byte, 0)
 	for _, b := range batches {
 		// Write bundles to S3
+		// no need to write entries that have already been written
+		if len(b.Entries)+int(b.Idx)*s.params.EntryBundleSize < int(size) {
+			continue
+		}
 		bd, bf := layout.SeqPath(s.path, b.Idx)
 		if len(b.Entries) < s.params.EntryBundleSize {
 			bf = fmt.Sprintf("%s.%d", bf, len(b.Entries))

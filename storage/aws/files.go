@@ -955,6 +955,7 @@ func (s *Storage) updateSequencedKeys(ctx context.Context, limit int64) error {
 		FilterExpression:          expr.Filter(),
 		ProjectionExpression:      expr.Projection(),
 		ReturnConsumedCapacity:    dynamodbtypes.ReturnConsumedCapacityTotal,
+		Limit:                     aws.Int32(500),
 	}
 
 	output, err := s.ddb.Scan(ctx, input)

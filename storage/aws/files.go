@@ -831,13 +831,13 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 		}
 		klog.V(1).Infof("getSequencedBundlesSlices - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 		batchSlices := []BatchSlice{}
+		batches = append(batches, Batch{})
 		if len(output.Items) == 0 {
 			continue
 		}
 		if err := attributevalue.UnmarshalListOfMaps(output.Items, &batchSlices); err != nil {
 			return nil, false, fmt.Errorf("can't unmarshall entries: %v", err)
 		}
-		batches = append(batches, Batch{})
 		for _, slice := range batchSlices {
 			klog.V(2).Infof("fetched bundle starting at %d with offset %d", slice.Idx, slice.Offset)
 			batches[i].Logname = s.path

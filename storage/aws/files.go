@@ -890,7 +890,7 @@ func (s *Storage) deleteSequencedBundles(ctx context.Context) error {
 		}
 		// 20 should be enough to make sure we don't delete a batch that we haven't integrated yet
 		// TODO: better protect this
-		if err := s.updateSequencedKeys(ctx, int64(curSize)-20*int64(s.params.EntryBundleSize)); err != nil {
+		if err := s.updateSequencedKeys(ctx, int64(curSize/uint64(s.params.EntryBundleSize))-20); err != nil {
 			return fmt.Errorf("updateSequencedKeys(): %v", err)
 		}
 	}

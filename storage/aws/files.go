@@ -621,6 +621,17 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	t := time.Now()
 	startTime := t
 
+	defer func() {
+		klog.V(1).Infof("Integrate: %v [lock: %v, readBundle %v, serialize %v, integration %v, delete %v]",
+			time.Since(startTime),
+			l.readCP,
+			l.readBundle,
+			l.serialize,
+			l.integration,
+			l.delete,
+		)
+	}()
+
 	if s.intWithLock {
 		s.Lock()
 		if err := s.lockAWS(lockS3Table); err != nil {
@@ -682,15 +693,6 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("doIntegrate: %v", err)
 	}
 	l.integration = time.Since(t)
-
-	klog.V(1).Infof("Integrate: %v [lock: %v, readBundle %v, serialize %v, integration %v, delete %v]",
-		time.Since(startTime),
-		l.readCP,
-		l.readBundle,
-		l.serialize,
-		l.integration,
-		l.delete,
-	)
 
 	return more, nil
 }
@@ -805,7 +807,7 @@ func (s *Storage) stageBundleSlice(ctx context.Context, entries [][]byte, bundle
 // getSequencedBundlesSlices reads Bundles from the sequencedtable
 func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx uint64, nBundle int) ([]Batch, bool, error) {
 	// TODO: read bundles in paralell rater than sequencially
-	batches := make([]Batch, nBundle)
+	batches := make([]Batch, 0, nBundle)
 	for i := 0; i < nBundle; i++ {
 		keyCond := expression.Key("Idx").Equal(expression.Value(startBundleIdx + uint64(i)))
 		expr, err := expression.NewBuilder().WithKeyCondition(keyCond).Build()
@@ -834,6 +836,7 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 		if err := attributevalue.UnmarshalListOfMaps(output.Items, &batchSlices); err != nil {
 			return nil, false, fmt.Errorf("can't unmarshall entries: %v", err)
 		}
+		batches := append(batches, Batch{})
 		for _, slice := range batchSlices {
 			klog.V(2).Infof("fetched bundle starting at %d with offset %d", slice.Idx, slice.Offset)
 			batches[i].Logname = s.path

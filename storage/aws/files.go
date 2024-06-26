@@ -662,12 +662,12 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("getSequencesBundles: %v", err)
 	}
+	l.readBundle = time.Since(t)
+	t = time.Now()
 	klog.V(2).Infof("bundle batches to integrate: %v", len(batches))
 	if len(batches) == 0 {
 		return false, nil
 	}
-	l.readBundle = time.Since(t)
-	t = time.Now()
 
 	entries := make([][]byte, 0)
 	for _, b := range batches {

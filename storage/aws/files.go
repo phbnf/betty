@@ -842,7 +842,7 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 			klog.V(2).Infof("fetched bundle starting at %d with offset %d", slice.Idx, slice.Offset)
 			batches[i].Logname = s.path
 			batches[i].Idx = slice.Idx
-			batches[i].Entries = append(batches[0].Entries, slice.Entries...)
+			batches[i].Entries = append(batches[i].Entries, slice.Entries...)
 		}
 		klog.V(1).Infof("getSequencedBundlesSlices - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 		klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)

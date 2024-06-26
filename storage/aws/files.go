@@ -69,6 +69,11 @@ type Storage struct {
 
 	dedupSeq    bool
 	intWithLock bool
+
+	sequencedKeys []struct {
+		Idx    int64
+		Offset int64
+	}
 }
 
 // NewTreeFunc is the signature of a function which receives information about newly integrated trees.
@@ -135,6 +140,22 @@ func New(ctx context.Context, path string, params log.Params, batchMaxAge time.D
 					if err != nil {
 						klog.V(1).Infof("r.Integrate(): %v", err)
 					}
+				}
+			}
+		}
+	}()
+
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				err := r.deleteSequencedBundles(ctx)
+				if err != nil {
+					klog.V(1).Infof("r.deleteSequencedBundles(): %v", err)
 				}
 			}
 		}
@@ -629,8 +650,8 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("getSequencesBundles: %v", err)
 	}
+	klog.V(2).Infof("bundle batches to integrate: %v", len(batches))
 	if len(batches) == 0 {
-		klog.V(2).Info("nothing to integrate")
 		return false, nil
 	}
 	l.readBundle = time.Since(t)
@@ -847,34 +868,94 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 	return batches, (len(output.Items) > 0), nil
 }
 
-func (s *Storage) deleteSequencedBundles(ctx context.Context, start, len uint64) error {
-	//TODO: batching. But it only allows 25 entries at a time
-	for i := start; i < start+len; i++ {
-		// TODO(phboneff): see if I can bundle everything in on transation
-		item := struct {
-			Idx uint64
-		}{
-			Idx: i,
-		}
-
-		av, err := attributevalue.MarshalMap(item)
+func (s *Storage) deleteSequencedBundles(ctx context.Context) error {
+	if len(s.sequencedKeys) == 0 {
+		klog.Infof("no more sequenced bundles to garbage collect cached, will fetch new keys")
+		currCP, err := s.ReadCheckpoint()
 		if err != nil {
-			klog.Fatalf("Got error marshalling key to delete bundles: %s", err)
+			klog.Infof("Couldn't load checkpoint:  %v", err)
 		}
-
-		input := &dynamodb.DeleteItemInput{
-			Key:                    av,
-			TableName:              aws.String(bundleSlicesTable),
-			ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityIndexes,
-		}
-
-		output, err := s.ddb.DeleteItem(ctx, input)
+		curSize, _, err := s.curTree(currCP)
 		if err != nil {
-			return fmt.Errorf("could not delete bundle %d: %v", i, err)
+			klog.Infof("Can't get current tree: %v", err)
 		}
-		klog.V(1).Infof("deleteSequenceBundles - R:%v, W:%v", output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
+		// 20 should be enough to make sure we don't delete a batch that we haven't integrated yet
+		// TODO: better protect this
+		if err := s.updateSequencedKeys(ctx, curSize-20*uint64(s.params.EntryBundleSize)); err != nil {
+			return fmt.Errorf("updateSequencedKeys(): %v", err)
+		}
 	}
-	klog.V(2).Infof("successfully removed bundles %d to %d from the sequenced table", start, start+len)
+
+	for len(s.sequencedKeys) > 0 {
+		t := time.Now()
+
+		allRequests := []dynamodbtypes.WriteRequest{}
+		last := min(len(s.sequencedKeys), 25)
+		for _, v := range s.sequencedKeys[0:last] {
+			key, err := attributevalue.MarshalMap(v)
+			if err != nil {
+				return fmt.Errorf("error masrsalling keys of bundles to delete: %v", err)
+			}
+			av := &dynamodbtypes.DeleteRequest{
+				Key: key,
+			}
+			allRequests = append(allRequests, dynamodbtypes.WriteRequest{DeleteRequest: av})
+		}
+		input := &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]dynamodbtypes.WriteRequest{
+				bundleSlicesTable: allRequests,
+			},
+			ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
+		}
+
+		output, err := s.ddb.BatchWriteItem(ctx, input)
+		if err != nil {
+			return fmt.Errorf("couldn't delete sequenced bundles: %v", err)
+		}
+		tC, tR, tW := 0.0, 0.0, 0.0
+		for _, c := range output.ConsumedCapacity {
+			if c.ReadCapacityUnits != nil {
+				tR += *c.ReadCapacityUnits
+			}
+			if c.WriteCapacityUnits != nil {
+				tW += *c.WriteCapacityUnits
+			}
+			if c.CapacityUnits != nil {
+				tC += *c.CapacityUnits
+			}
+		}
+		klog.V(1).Infof("deleteSequencedBundles- C: %v, R: %v, W: %v", tC, tR, tW)
+		klog.V(1).Infof("took %v to do a BatchWriteItem delete sequenced bundles query", time.Since(t))
+		s.sequencedKeys = s.sequencedKeys[last:]
+	}
+	return nil
+}
+
+func (s *Storage) updateSequencedKeys(ctx context.Context, limit uint64) error {
+	filter := expression.Name("Idx").LessThan(expression.Value(limit))
+	proj := expression.NamesList(expression.Name("Idx"), expression.Name("Offset"))
+	expr, err := expression.NewBuilder().WithFilter(filter).WithProjection(proj).Build()
+	if err != nil {
+		klog.Fatalf("Cannot create dynamodb condition: %v", err)
+	}
+
+	input := &dynamodb.ScanInput{
+		ExpressionAttributeValues: expr.Values(),
+		ExpressionAttributeNames:  expr.Names(),
+		TableName:                 aws.String(bundleSlicesTable),
+		FilterExpression:          expr.Filter(),
+		ProjectionExpression:      expr.Projection(),
+		ReturnConsumedCapacity:    dynamodbtypes.ReturnConsumedCapacityTotal,
+	}
+
+	output, err := s.ddb.Scan(ctx, input)
+	if err != nil {
+		return fmt.Errorf("error reading staged entries indexes from DynamoDB: %v", err)
+	}
+	if err := attributevalue.UnmarshalListOfMaps(output.Items, &s.sequencedKeys); err != nil {
+		return fmt.Errorf("couldn't get sequenced bundles to delete: %v", err)
+	}
+	klog.V(1).Infof("found %v sequenced bundle batches to delete", len(s.sequencedKeys))
 	return nil
 }
 

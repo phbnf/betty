@@ -965,6 +965,7 @@ func (s *Storage) updateSequencedKeys(ctx context.Context, limit int64) error {
 
 // doIntegrate handles integrating new entries into the log, and updating the checkpoint.
 func (s *Storage) doIntegrate(ctx context.Context, from uint64, batch [][]byte) error {
+	klog.V(2).Infof("will integrate %d entries from size %d", len(batch), from)
 	newSize, newRoot, err := writer.Integrate(ctx, from, batch, s, rfc6962.DefaultHasher)
 	if err != nil {
 		klog.Errorf("Failed to integrate: %v", err)

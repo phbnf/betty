@@ -622,8 +622,9 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	startTime := t
 
 	defer func() {
-		klog.V(1).Infof("Integrate: %v [lock: %v, readBundle %v, serialize %v, integration %v, delete %v]",
+		klog.V(1).Infof("Integrate: %v [lock: %v, readCP: %v, readBundle: %v, serialize: %v, integration: %v, delete: %v]",
 			time.Since(startTime),
+			l.lock,
 			l.readCP,
 			l.readBundle,
 			l.serialize,

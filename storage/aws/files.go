@@ -610,12 +610,13 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 }
 
 type latencyIntegration struct {
-	lock        time.Duration
-	readCP      time.Duration
-	readBundle  time.Duration
-	serialize   time.Duration
-	integration time.Duration
-	delete      time.Duration
+	lock                   time.Duration
+	readCP                 time.Duration
+	readNextSequencedIndex time.Duration
+	readBundle             time.Duration
+	serialize              time.Duration
+	integration            time.Duration
+	delete                 time.Duration
 }
 
 // Integrate dumps last entries from the sequenceTable to S3, and integrates them
@@ -658,6 +659,16 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 	}
 	size, _, _ := s.curTree(currCP)
 	l.readCP = time.Since(t)
+	t = time.Now()
+
+	nextSequencedIndex, err := s.ReadSequencedIndex()
+	if err != nil {
+		klog.Fatalf("ReadSequencedIndex(): %v", err)
+	}
+	if size == nextSequencedIndex {
+		return false, nil
+	}
+	l.readNextSequencedIndex = time.Since(t)
 	t = time.Now()
 
 	// TODO: check that theindex returned here by the bundle actually matched the bundle that we will write to

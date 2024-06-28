@@ -851,7 +851,6 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 		if err != nil {
 			return nil, false, fmt.Errorf("error reading staged entries from DynamoDB: %v", err)
 		}
-		klog.V(1).Infof("getSequencedBundlesSlices - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 		batchSlices := []BatchSlice{}
 		batches = append(batches, Batch{})
 		if len(output.Items) == 0 {
@@ -866,7 +865,7 @@ func (s *Storage) getSequencedBundlesSlices(ctx context.Context, startBundleIdx 
 			batches[i].Idx = slice.Idx
 			batches[i].Entries = append(batches[i].Entries, slice.Entries...)
 		}
-		klog.V(1).Infof("getSequencedBundlesSlices - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
+		klog.V(1).Infof("getSequencedBundlesSlices - Card: %v, T: %v, R:%v, W:%v", len(batches[i].Entries), *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 		klog.V(1).Infof("This is the remaning number of things to integrate: %v", output.ScannedCount)
 	}
 

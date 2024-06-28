@@ -322,7 +322,7 @@ func (s *Storage) ContainsHashes(ctx context.Context, keys []string) (map[string
 				tC += *c.CapacityUnits
 			}
 		}
-		klog.V(1).Infof("ContainsHashes - C: %v, R: %v, W: %v", tC, tR, tW)
+		klog.V(1).Infof("ContainsHashes - Card: %v, C: %v, R: %v, W: %v", len(allRequests), tC, tR, tW)
 		klog.V(1).Infof("took %v to do a BatchGetItem duplicate query", time.Since(t1))
 	}
 	return ret, nil
@@ -376,7 +376,7 @@ func (s *Storage) DedupHashes(ctx context.Context, kv map[string]uint64) error {
 				tC += *c.CapacityUnits
 			}
 		}
-		klog.V(1).Infof("DedupHashes - C: %v, R: %v, W: %v", tC, tR, tW)
+		klog.V(1).Infof("DedupHashes - Card: %v, C: %v, R: %v, W: %v", len(input.RequestItems[dedupTable]), tC, tR, tW)
 		klog.V(1).Infof("took %v to do a BatchWriteItem duplicate query", time.Since(t1))
 	}
 	return nil

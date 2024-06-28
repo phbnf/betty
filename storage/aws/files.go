@@ -591,8 +591,11 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 		klog.V(1).Infof("couldnt' write sequencing transation: %v", err)
 		return nil, err
 	}
-	tR, tW := 0.0, 0.0
+	tC, tR, tW := 0.0, 0.0, 0.0
 	for _, c := range output.ConsumedCapacity {
+		if c.CapacityUnits != nil {
+			tC += *c.CapacityUnits
+		}
 		if c.ReadCapacityUnits != nil {
 			tR += *c.ReadCapacityUnits
 		}
@@ -600,7 +603,7 @@ func (s *Storage) sequenceBatchNoLock(ctx context.Context, batch writer.Batch) (
 			tW += *c.WriteCapacityUnits
 		}
 	}
-	klog.V(1).Infof("sequenceBatchNoLock - R:%v, W:%v", tR, tW)
+	klog.V(1).Infof("sequenceBatchNoLock - Card: %v, C: %v R:%v, W:%v", currSeq-seq, tC, tR, tW)
 	klog.V(1).Infof("sequenceBatchNoLock: %v [readIDx: %v, transaction: %v]", time.Since(startTime), l.readIdx, l.transaction)
 
 	if s.dedupSeq {

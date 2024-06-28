@@ -1077,9 +1077,10 @@ func (s *Storage) ReadSequencedIndex() (uint64, error) {
 	}
 
 	input := &dynamodb.GetItemInput{
-		Key:            av,
-		TableName:      aws.String(sequencedTable),
-		ConsistentRead: aws.Bool(true),
+		Key:                    av,
+		TableName:              aws.String(sequencedTable),
+		ConsistentRead:         aws.Bool(true),
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
 	output, err := s.ddb.GetItem(context.TODO(), input)
@@ -1091,6 +1092,7 @@ func (s *Storage) ReadSequencedIndex() (uint64, error) {
 		return 0, fmt.Errorf("can't unmarshall sequenced index: %v", err)
 	}
 
+	klog.V(1).Infof("ReadSequencedIndex - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	return val.Idx, nil
 }
 
@@ -1107,14 +1109,17 @@ func (s *Storage) WriteSequencedIndex(idx uint64) error {
 	}
 
 	input := &dynamodb.PutItemInput{
-		Item:      av,
-		TableName: aws.String(sequencedTable),
+		Item:                   av,
+		TableName:              aws.String(sequencedTable),
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
 	}
 
-	_, err = s.ddb.PutItem(context.TODO(), input)
+	output, err := s.ddb.PutItem(context.TODO(), input)
 	if err != nil {
 		return fmt.Errorf("error reading sequenced index from DynamoDB: %v", err)
 	}
+
+	klog.V(1).Infof("WriteSequencedIndex - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 
 	return nil
 }

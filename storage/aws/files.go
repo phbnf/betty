@@ -982,6 +982,7 @@ func (s *Storage) updateSequencedKeys(ctx context.Context, limit int64) error {
 	if err := attributevalue.UnmarshalListOfMaps(output.Items, &s.sequencedKeys); err != nil {
 		return fmt.Errorf("couldn't get sequenced bundles to delete: %v", err)
 	}
+	klog.V(1).Infof("updateSequencedKeys - T: %v, R:%v, W:%v", *output.ConsumedCapacity.CapacityUnits, output.ConsumedCapacity.ReadCapacityUnits, output.ConsumedCapacity.WriteCapacityUnits)
 	klog.V(1).Infof("found %v sequenced bundle batches to delete: %v", len(s.sequencedKeys), s.sequencedKeys)
 	return nil
 }

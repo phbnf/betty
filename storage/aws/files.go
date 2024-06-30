@@ -1137,6 +1137,10 @@ func (s *Storage) NewTree(size uint64, hash []byte) error {
 
 // WriteFile stores a file on S3.
 func (s *Storage) WriteFile(path string, data []byte) error {
+	t := time.Now()
+	defer func() {
+		klog.V(1).Infof("WriteFile: %v", time.Since(t))
+	}()
 	_, err := s.s3.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(path),
@@ -1150,6 +1154,10 @@ func (s *Storage) WriteFile(path string, data []byte) error {
 
 // ReadFile reas a file from S3.
 func (s *Storage) ReadFile(path string) ([]byte, error) {
+	t := time.Now()
+	defer func() {
+		klog.V(1).Infof("ReadFile: %v", time.Since(t))
+	}()
 	result, err := s.s3.GetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(path),

@@ -700,7 +700,9 @@ func (s *Storage) Integrate(ctx context.Context) (bool, error) {
 		}
 		// TODO: do something more eleguqnt than this
 		data := []byte(strings.Join(b.Entries, "\n"))
-		s.WriteFile(filepath.Join(bd, bf), data)
+		if err := s.WriteFile(filepath.Join(bd, bf), data); err != nil {
+			return false, err
+		}
 		for i, e := range b.Entries {
 			// Only start integrating entries past the current checkpoint
 			if b.Idx*(uint64(s.params.EntryBundleSize))+uint64(i) >= size {
@@ -1052,6 +1054,7 @@ func (s *Storage) WriteCheckpoint(newCPRaw []byte) error {
 	klog.V(2).Infof("Writting checkpoint of size %d\n", size)
 	if err := s.WriteFile(path, newCPRaw); err != nil {
 		klog.Infof("Couldn't write checkpoint: %v", err)
+		return err
 	}
 	return nil
 }
@@ -1148,6 +1151,7 @@ func (s *Storage) WriteFile(path string, data []byte) error {
 	})
 	if err != nil {
 		klog.Infof("Couldn't write data at path %s: %v", path, err)
+		return err
 	}
 	return nil
 }

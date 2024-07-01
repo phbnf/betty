@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"k8s.io/klog/v2"
 )
 
 type Batch struct {
@@ -70,6 +72,7 @@ func (p *Pool) Add(e []byte) (uint64, error) {
 }
 
 func (p *Pool) flushWithLock() {
+	klog.V(1).Infof("len added: %v, len batch: %v, len hashes: %v", p.current.Count, len(p.current.Entries), len(p.current.Hashes))
 	// timer can be nil if a batch was flushed because it because full at about the same time as it hit maxAge.
 	// In this case we can just return.
 	if p.flushTimer == nil {
@@ -89,6 +92,7 @@ func (p *Pool) flushWithLock() {
 }
 
 type batch struct {
+	Count   uint64
 	Entries [][]byte
 	Done    chan struct{}
 	Seqs    []uint64
@@ -97,6 +101,7 @@ type batch struct {
 }
 
 func (b *batch) Add(e []byte) int {
+	b.Count += 1
 	hash := sha256.Sum256(e)
 	i, ok := b.Hashes[hash]
 	if ok {

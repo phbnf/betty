@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"io"
@@ -111,6 +113,8 @@ func main() {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		hash := sha256.Sum256(b)
+		klog.V(1).Infof(base64.StdEncoding.EncodeToString(hash[:]))
 		idx, err := s.Sequence(ctx, b)
 		if err != nil {
 			klog.V(1).Infof("failed to sequence entry: %v", err)
